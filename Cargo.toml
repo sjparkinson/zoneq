@@ -1,6 +1,9 @@
 [package]
 name = "zoneq"
-version = "0.0.0"
+version = "0.1.0"
 authors = ["Samuel Parkinson <sam.james.parkinson@gmail.com>"]
 
 [dependencies]
+
+[dev-dependencies]
+rustfmt = "0.3.7"
