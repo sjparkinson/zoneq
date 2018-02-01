@@ -36,7 +36,7 @@ fn main() {
         println!("zoneq {}", VERSION);
         process::exit(0);
     }
-    
+
     if let Some(ref q) = config.query {
         println!("The query is {}", q);
     }
@@ -66,7 +66,7 @@ struct Config {
     query: Option<String>,
     filename: Option<String>,
     help: bool,
-    version: bool
+    version: bool,
 }
 
 impl Config {
@@ -76,7 +76,7 @@ impl Config {
                 query: None,
                 filename: None,
                 help: true,
-                version: false
+                version: false,
             });
         }
 
@@ -86,16 +86,16 @@ impl Config {
                     query: None,
                     filename: None,
                     help: true,
-                    version: false
+                    version: false,
                 });
             }
-            
+
             if arg == "--version" {
                 return Ok(Config {
                     query: None,
                     filename: None,
                     help: false,
-                    version: true
+                    version: true,
                 });
             }
         }
@@ -107,7 +107,7 @@ impl Config {
             query,
             filename,
             help: false,
-            version: false
+            version: false,
         })
     }
 }
