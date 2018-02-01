@@ -1,6 +1,7 @@
 use std::env;
 use std::error::Error;
 use std::fs::File;
+use std::io;
 use std::io::prelude::*;
 use std::process;
 
@@ -42,21 +43,28 @@ fn main() {
     }
 
     if let Err(e) = run(config) {
-        println!("Application error: {}", e);
+        println!("Oh no, there was an error: {}", e);
         process::exit(1);
     }
 }
 
 fn run(config: Config) -> Result<(), Box<Error>> {
     if let Some(ref filename) = config.filename {
-        let mut f = File::open(filename).expect("file not found");
+        // Load the zone file from disk.
+        let mut buffer = String::new();
+        File::open(filename)?.read_to_string(&mut buffer)?;
 
-        let mut contents = String::new();
+        println!("With zone:\n{}", buffer);
+    }
 
-        f.read_to_string(&mut contents)
-            .expect("something went wrong reading the file");
+    if config.filename.is_none() {
+        // Load the zone file from stdin.
+        let mut buffer = String::new();
+        let stdin = io::stdin();
 
-        println!("With zone:\n{}", contents);
+        stdin.lock().read_to_string(&mut buffer)?;
+
+        println!("With zone:\n{}", buffer);
     }
 
     Ok(())
