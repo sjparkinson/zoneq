@@ -1,121 +1,48 @@
-use std::env;
-use std::error::Error;
-use std::fs::File;
-use std::io;
-use std::io::prelude::*;
+extern crate docopt;
+extern crate zoneq;
+
+use docopt::Docopt;
 use std::process;
+use zoneq::Config;
 
 const USAGE: &'static str = "
 zoneq
 
 Usage:
-  zoneq <query> [<file>...]
+  zoneq <query> <file>
   zoneq -h | --help
   zoneq --version
 
 Options:
-  -h --help     Show this screen.
-  --version     Show version.
+  -h, --help    Show this screen.
+  --version     Show the version.
 ";
 
 const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
 fn main() {
-    let args: Vec<String> = env::args().collect();
+    let args = Docopt::new(USAGE)
+        .and_then(|opts| opts.parse())
+        .unwrap_or_else(|e| e.exit());
 
-    let config = Config::new(&args).unwrap_or_else(|err| {
-        println!("Problem parsing arguments: {}", err);
-        process::exit(1);
-    });
-
-    if config.help {
-        println!("{}", USAGE);
-        process::exit(0);
-    }
+    let config = Config::new(&args);
 
     if config.version {
         println!("zoneq {}", VERSION);
         process::exit(0);
     }
 
-    if let Some(ref q) = config.query {
-        println!("The query is {}", q);
-    }
-
-    if let Err(e) = run(config) {
-        println!("Oh no, there was an error: {}", e);
+    if let Err(e) = zoneq::run(config.query, config.filename) {
+        println!("Oh no! {}", format_err(e.to_string()));
         process::exit(1);
     }
 }
 
-fn run(config: Config) -> Result<(), Box<Error>> {
-    if let Some(ref filename) = config.filename {
-        // Load the zone file from disk.
-        let mut buffer = String::new();
-        File::open(filename)?.read_to_string(&mut buffer)?;
+fn format_err(err: String) -> String {
+    let mut c = err.chars();
 
-        println!("With zone:\n{}", buffer);
-    }
-
-    if config.filename.is_none() {
-        // Load the zone file from stdin.
-        let mut buffer = String::new();
-        let stdin = io::stdin();
-
-        stdin.lock().read_to_string(&mut buffer)?;
-
-        println!("With zone:\n{}", buffer);
-    }
-
-    Ok(())
-}
-
-struct Config {
-    query: Option<String>,
-    filename: Option<String>,
-    help: bool,
-    version: bool,
-}
-
-impl Config {
-    fn new(args: &[String]) -> Result<Config, &'static str> {
-        if args.len() == 1 {
-            return Ok(Config {
-                query: None,
-                filename: None,
-                help: true,
-                version: false,
-            });
-        }
-
-        for arg in args {
-            if arg == "-h" || arg == "--help" {
-                return Ok(Config {
-                    query: None,
-                    filename: None,
-                    help: true,
-                    version: false,
-                });
-            }
-
-            if arg == "--version" {
-                return Ok(Config {
-                    query: None,
-                    filename: None,
-                    help: false,
-                    version: true,
-                });
-            }
-        }
-
-        let query = args.get(1).cloned();
-        let filename = args.get(2).cloned();
-
-        Ok(Config {
-            query,
-            filename,
-            help: false,
-            version: false,
-        })
+    match c.next() {
+        None => String::new(),
+        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
     }
 }

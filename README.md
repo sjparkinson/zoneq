@@ -18,3 +18,7 @@ Options:
   -h --help     Show this screen.
   --version     Show version.
 ```
+
+## Further Reading
+
+* [The zone file format, RFC 1035 § 5](https://tools.ietf.org/html/rfc1035#section-5)
