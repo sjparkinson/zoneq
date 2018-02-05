@@ -9,13 +9,16 @@ const USAGE: &'static str = "
 zoneq
 
 Usage:
-  zoneq <query> <file>
+  zoneq <query> <file> [--type=<type>]
   zoneq -h | --help
   zoneq --version
 
-Options:
-  -h, --help    Show this screen.
-  --version     Show the version.
+Filters:
+  --type <type>     Filter query by record type.
+
+Options: 
+  -h, --help        Show this screen.
+  --version         Show the version.
 ";
 
 const VERSION: &'static str = env!("CARGO_PKG_VERSION");
@@ -33,16 +36,7 @@ fn main() {
     }
 
     if let Err(e) = zoneq::run(config.query, config.filename) {
-        println!("Oh no! {}", format_err(e.to_string()));
+        println!("Oh no! {}", e);
         process::exit(1);
-    }
-}
-
-fn format_err(err: String) -> String {
-    let mut c = err.chars();
-
-    match c.next() {
-        None => String::new(),
-        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
     }
 }
