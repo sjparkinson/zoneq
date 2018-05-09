@@ -147,7 +147,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "zoneq"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "docopt 0.8.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "nom 4.0.0-beta3 (registry+https://github.com/rust-lang/crates.io-index)",

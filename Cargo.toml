@@ -1,6 +1,6 @@
 [package]
 name = "zoneq"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Samuel Parkinson <sam.james.parkinson@gmail.com>"]
 description = "Query zone files."
 repository = "https://github.com/sjparknson/zoneq"
