@@ -1,10 +1,10 @@
 extern crate docopt;
 
+use std::boxed::Box;
 use std::error::Error;
 use std::fs;
 use std::fs::File;
 use std::io::prelude::*;
-use std::boxed::Box;
 
 type Result<T> = std::result::Result<T, Box<Error>>;
 
@@ -23,30 +23,14 @@ pub fn run(_query: &str, filename: &str) -> Result<()> {
     }
 
     // We're going to load the zone file into this.
-    let mut zone = String::new();
+    let mut raw = String::new();
 
     // Open and load the file, let errors bubble up.
-    File::open(filename)?.read_to_string(&mut zone)?;
+    File::open(filename)?.read_to_string(&mut raw)?;
 
     // For now, print what we've read.
-    println!("{}", zone);
+    println!("{}", raw);
 
     // We're good!
     Ok(())
-}
-
-pub struct Config<'a> {
-    pub query: &'a str,
-    pub filename: &'a str,
-    pub version: bool,
-}
-
-impl<'a> Config<'a> {
-    pub fn new(args: &'a docopt::ArgvMap) -> Config<'a> {
-        Config {
-            query: args.get_str("<query>"),
-            filename: args.get_str("<file>"),
-            version: args.get_bool("--version")
-        }
-    }
 }

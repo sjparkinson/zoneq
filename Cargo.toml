@@ -2,6 +2,15 @@
 name = "zoneq"
 version = "0.1.0"
 authors = ["Samuel Parkinson <sam.james.parkinson@gmail.com>"]
+description = "Query zone files."
+repository = "https://github.com/sjparknson/zoneq"
+readme = "README.md"
+license = "MIT"
+
+[badges]
+travis-ci = { repository = "sjparkinson/zoneq", branch = "master" }
+maintenance = { status = "experimental" }
 
 [dependencies]
 docopt = "0.8.3"
+nom = "4.0.0-beta3 "

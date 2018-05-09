@@ -3,7 +3,6 @@ extern crate zoneq;
 
 use docopt::Docopt;
 use std::process;
-use zoneq::Config;
 
 const USAGE: &'static str = "
 zoneq
@@ -36,7 +35,23 @@ fn main() {
     }
 
     if let Err(e) = zoneq::run(config.query, config.filename) {
-        println!("Oh no! {}", e);
+        eprintln!("Oh no! {}", e);
         process::exit(1);
+    }
+}
+
+struct Config<'a> {
+    query: &'a str,
+    filename: &'a str,
+    version: bool,
+}
+
+impl<'a> Config<'a> {
+    fn new(args: &'a docopt::ArgvMap) -> Config<'a> {
+        Config {
+            query: args.get_str("<query>"),
+            filename: args.get_str("<file>"),
+            version: args.get_bool("--version")
+        }
     }
 }
