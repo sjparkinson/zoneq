@@ -8,15 +8,16 @@ Query zone files.
 zoneq
 
 Usage:
-  zoneq <pattern> [<file>...]
+  zoneq [--type=<type>] <query> <file>
   zoneq -h | --help
   zoneq --version
 
-Example: zoneq *.example.com example.zone
+Filters:
+  --type <type>     Filter query by record type.
 
-Options:
-  -h --help     Show this screen.
-  --version     Show version.
+Options: 
+  -h, --help        Show this screen.
+  --version         Show the version.
 ```
 
 ## Further Reading

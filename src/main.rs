@@ -1,5 +1,6 @@
 extern crate docopt;
 extern crate zoneq;
+#[macro_use] extern crate nom;
 
 use docopt::Docopt;
 use std::process;
@@ -8,7 +9,7 @@ const USAGE: &'static str = "
 zoneq
 
 Usage:
-  zoneq <query> <file> [--type=<type>]
+  zoneq [--type=<type>] <query> <file>
   zoneq -h | --help
   zoneq --version
 
@@ -43,6 +44,7 @@ fn main() {
 struct Config<'a> {
     query: &'a str,
     filename: &'a str,
+    record_type: &'a str,
     version: bool,
 }
 
@@ -51,7 +53,8 @@ impl<'a> Config<'a> {
         Config {
             query: args.get_str("<query>"),
             filename: args.get_str("<file>"),
-            version: args.get_bool("--version")
+            record_type: args.get_str("<type>"),
+            version: args.get_bool("--version"),
         }
     }
 }

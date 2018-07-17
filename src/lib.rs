@@ -1,4 +1,11 @@
 extern crate docopt;
+#[macro_use]
+extern crate nom;
+#[macro_use]
+extern crate lazy_static;
+extern crate regex;
+
+mod parser;
 
 use std::boxed::Box;
 use std::error::Error;
