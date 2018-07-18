@@ -1,9 +1,17 @@
 use nom::*;
 use nom::types::CompleteStr;
+use std::result;
+use std::error::Error;
+
+type Result<T> = result::Result<T, Box<Error>>;
 
 #[derive(Debug)]
 struct Zone<'a> {
     origin: &'a str,
+}
+
+pub fn parse(input: &[u8]) -> Result<()> {
+    Ok(())
 }
 
 fn is_end_of_text(chr: char) -> bool {

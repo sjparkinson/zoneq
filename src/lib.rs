@@ -38,6 +38,6 @@ pub fn run(_query: &str, filename: &str) -> Result<()> {
     // For now, print what we've read.
     println!("{}", raw);
 
-    // We're good!
-    Ok(())
+    // Do the parse.
+    parser::parse((&raw[..]).as_bytes())
 }
