@@ -8,9 +8,12 @@ rust:
 matrix:
   allow_failures:
     - rust: nightly
+  fast_finish: true
+  
+script:
+  - cargo test -v
+  - cargo build -v --release
+  - target/release/zoneq --help
+  - target/release/zoneq .example.com example.zone
 
 cache: cargo
-
-script:
-  - cargo build
-  - cargo test
