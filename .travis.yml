@@ -11,8 +11,8 @@ matrix:
   fast_finish: true
   
 script:
-  - cargo test -v
-  - cargo build -v --release
+  - cargo test
+  - cargo build --release
   - target/release/zoneq --help
   - target/release/zoneq .example.com example.zone
 
