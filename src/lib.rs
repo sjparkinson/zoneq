@@ -1,9 +1,7 @@
 extern crate docopt;
+extern crate pest;
 #[macro_use]
-extern crate nom;
-#[macro_use]
-extern crate lazy_static;
-extern crate regex;
+extern crate pest_derive;
 
 mod parser;
 
@@ -35,9 +33,10 @@ pub fn run(_query: &str, filename: &str) -> Result<()> {
     // Open and load the file, let errors bubble up.
     File::open(filename)?.read_to_string(&mut raw)?;
 
-    // For now, print what we've read.
-    println!("{}", raw);
-
     // Do the parse.
-    parser::parse((&raw[..]).as_bytes())
+    if let Err(e) = parser::parse(&raw) {
+        return Err(e);
+    }
+
+    Ok(())
 }

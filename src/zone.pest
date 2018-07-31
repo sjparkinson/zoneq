@@ -1,0 +1,32 @@
+// Grammer that defines how to parse a zone file.
+
+// The main expression.
+zone = { soi ~ origin ~ eoi }
+
+// Magic expressions that Pest uses to trim clutter from the file being parsed.
+newline = _{ "\n" | "\r\n" }
+whitespace = _{ " " | "\t " | newline }
+comment = _{ ";" ~ (!newline ~ any)* }
+
+// Literals
+number = @{ '0'..'9'+ }
+
+origin = { "$ORIGIN" ~ domain }
+
+record_type = @{
+    "A" | "NS" | "MD" | "MF" | "CNAME" |
+    "SOA" | "MB" | "MG" | "MR" | "NULL" |
+    "WKS" | "PTR" | "HINFO" | "MINFO" | "MX" |
+    "TXT"
+}
+record_qtype = @{ "AXFR" | "MAILB" | "MAILA" | "*" | record_type }
+
+record_class = @{ "IN" | "CS" | "CH" | "HS" }
+record_qclass = @{ "*" | record_class }
+
+label = @{ 'a'..'z' | 'A'..'Z' | '0'..'9' | "-" }
+domain = @{ (!newline ~ any)* }
+
+record = { label ~ record_class ~ record_type ~ record_value }
+
+record_value = { any }

@@ -12,9 +12,5 @@ travis-ci = { repository = "sjparkinson/zoneq", branch = "master" }
 
 [dependencies]
 docopt = "^1.0.0"
-regex = "^1.0.1"
-lazy_static = "^1.0.0"
-
-[dependencies.nom]
-version = "^4.0.0"
-features = ["regexp", "regexp_macros"]
+pest = "^1.0.6"
+pest_derive = "^1.0.7"

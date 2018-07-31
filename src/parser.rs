@@ -1,55 +1,67 @@
-use nom::*;
-use nom::types::CompleteStr;
 use std::result;
 use std::error::Error;
+use pest::*;
 
 type Result<T> = result::Result<T, Box<Error>>;
 
-#[derive(Debug)]
-struct Zone<'a> {
-    origin: &'a str,
+#[cfg(debug_assertions)]
+const _GRAMMAR: &'static str = include_str!("zone.pest");
+
+#[derive(Parser)]
+#[grammar = "zone.pest"]
+struct ZoneParser;
+
+#[derive(Debug,PartialEq)]
+pub struct Zone {
+   origin: Option<String>
 }
 
-pub fn parse(input: &[u8]) -> Result<()> {
-    Ok(())
+pub fn parse(input: &str) -> Result<Zone> {
+    ZoneParser::parse(Rule::zone, input);
+
+    Ok(Zone{})
 }
 
-fn is_end_of_text(chr: char) -> bool {
-  chr == ';' || chr == '\n' || chr == ' '
-}
+#[cfg(test)]
+mod tests {
+    use parser::*;
+    use pest::*;
 
-named!(origin<CompleteStr, CompleteStr>,
-    do_parse!(
-                tag!("$ORIGIN")                         >>
-                space                                   >>
-        origin: take_till!(is_end_of_text)              >>
-                opt!(tag!("."))                         >>
-                opt!(space)                             >>
-                opt!(pair!(tag!(";"), not_line_ending)) >>
-                line_ending                             >>
-        (origin)
-    )
-);
+    #[test]
+    fn parse_origin() {
+        parses_to! {
+            parser: ZoneParser,
+            input: "$ORIGIN example.com",        
+            rule: Rule::origin,     
+            tokens: [
+                origin(0, 19, [
+                    domain(8, 19)
+                ])
+            ]
+        };
 
-#[test]
-fn parse_origin() {
-    assert_eq!(
-        Ok((CompleteStr(""), CompleteStr("example.com"))),
-        origin(CompleteStr("$ORIGIN example.com\n"))
-    );
+        parses_to! {
+            parser: ZoneParser,
+            input: "$ORIGIN example.com; this is a comment",        
+            rule: Rule::origin,     
+            tokens: [
+                origin(0, 19, [
+                    domain(8, 19)
+                ])
+            ]
+        };
 
-    assert_eq!(
-        Ok((CompleteStr(""), CompleteStr("example.com"))),
-        origin(CompleteStr("$ORIGIN example.com.\n"))
-    );
+        parses_to! {
+            parser: ZoneParser,
+            input: "$ORIGIN example.com ; some comment",        
+            rule: Rule::origin,     
+            tokens: [
+                origin(0, 19, [
+                    domain(8, 19)
+                ])
+            ]
+        };
 
-    assert_eq!(
-        Ok((CompleteStr(""), CompleteStr("example.com"))),
-        origin(CompleteStr("$ORIGIN example.com; this is a comment\n"))
-    );
-
-    assert_eq!(
-        Ok((CompleteStr(""), CompleteStr("example.com"))),
-        origin(CompleteStr("$ORIGIN example.com ; this is a comment\n"))
-    );
+        assert_eq!(Zone { origin: Some("example.com") }, parse("$ORIGIN example.com").unwrap());
+    }
 }
