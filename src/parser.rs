@@ -14,14 +14,31 @@ pub struct Zone {
 }
 
 pub fn parse(input: &String) -> Result<Zone, String> {
-    let _pairs = match ZoneParser::parse(Rule::zone, input.as_str()) {
+    let mut pairs = match ZoneParser::parse(Rule::zone, input.as_str()) {
         Ok(p) => p,
         Err(e) => return Err(format!("{}", e)) // todo: return a better error message
     };
 
-    Ok(Zone{
-        origin: Some("example.com".to_string())
-    })
+    let pair = pairs.next().unwrap();
+
+    println!("{}", pair);
+
+    Ok(consume(pair))
+}
+
+fn consume(pair: Pair<Rule>) -> Zone {
+    fn value(pair: Pair<Rule>) -> Zone {
+        let pair = pair.into_inner().next().unwrap();
+
+        match pair.as_rule() {
+            Rule::origin => {
+                
+            },
+            _ => unreachable!()
+        }
+    }
+
+    value(pair)
 }
 
 #[cfg(test)]
@@ -36,8 +53,8 @@ mod tests {
             input: "$ORIGIN example.com",        
             rule: Rule::origin,     
             tokens: [
-                origin(0, 19, [
-                    domain(8, 19)
+                origin(0, 20, [
+                    domain(8, 20)
                 ])
             ]
         };
@@ -47,8 +64,8 @@ mod tests {
             input: "$ORIGIN example.com; this is a comment",        
             rule: Rule::origin,     
             tokens: [
-                origin(0, 19, [
-                    domain(8, 19)
+                origin(0, 20, [
+                    domain(8, 20)
                 ])
             ]
         };
