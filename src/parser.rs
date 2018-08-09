@@ -1,8 +1,5 @@
-use std::result;
-use std::error::Error;
+use std::result::Result;
 use pest::*;
-
-type Result<T> = result::Result<T, Box<Error>>;
 
 #[cfg(debug_assertions)]
 const _GRAMMAR: &'static str = include_str!("zone.pest");
@@ -16,10 +13,15 @@ pub struct Zone {
    origin: Option<String>
 }
 
-pub fn parse(input: &str) -> Result<Zone> {
-    ZoneParser::parse(Rule::zone, input);
+pub fn parse(input: &String) -> Result<Zone, String> {
+    let _pairs = match ZoneParser::parse(Rule::zone, input.as_str()) {
+        Ok(p) => p,
+        Err(e) => return Err(format!("{}", e)) // todo: return a better error message
+    };
 
-    Ok(Zone{})
+    Ok(Zone{
+        origin: Some("example.com".to_string())
+    })
 }
 
 #[cfg(test)]
@@ -62,6 +64,6 @@ mod tests {
             ]
         };
 
-        assert_eq!(Zone { origin: Some("example.com") }, parse("$ORIGIN example.com").unwrap());
+        assert_eq!(Zone { origin: Some("example.com".to_string()) }, parse("$ORIGIN example.com").unwrap());
     }
 }

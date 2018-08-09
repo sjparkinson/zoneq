@@ -1,8 +1,8 @@
+#![feature(rust_2018_preview)]
+
 extern crate docopt;
-extern crate zoneq;
 
 use docopt::Docopt;
-use std::process;
 
 const USAGE: &'static str = "
 zoneq
@@ -22,7 +22,7 @@ Options:
 
 const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
-fn main() {
+fn main() -> Result<(), String> {
     let args = Docopt::new(USAGE)
         .and_then(|opts| opts.parse())
         .unwrap_or_else(|e| e.exit());
@@ -31,13 +31,14 @@ fn main() {
 
     if config.version {
         println!("zoneq {}", VERSION);
-        process::exit(0);
+        return Ok(());
     }
 
     if let Err(e) = zoneq::run(config.query, config.filename) {
-        eprintln!("Oh no! {}", e);
-        process::exit(1);
+        return Err(format!("{}", e));
     }
+
+    Ok(())
 }
 
 struct Config<'a> {

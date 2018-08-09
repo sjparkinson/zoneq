@@ -1,4 +1,3 @@
-extern crate docopt;
 extern crate pest;
 #[macro_use]
 extern crate pest_derive;
@@ -10,10 +9,9 @@ use std::error::Error;
 use std::fs;
 use std::fs::File;
 use std::io::prelude::*;
+use std::result::Result;
 
-type Result<T> = std::result::Result<T, Box<Error>>;
-
-pub fn run(_query: &str, filename: &str) -> Result<()> {
+pub fn run(_query: &str, filename: &str) -> Result<(), Box<dyn Error>> {
     // Check file meta.
     let metadata = fs::metadata(filename)?;
 
@@ -34,9 +32,7 @@ pub fn run(_query: &str, filename: &str) -> Result<()> {
     File::open(filename)?.read_to_string(&mut raw)?;
 
     // Do the parse.
-    if let Err(e) = parser::parse(&raw) {
-        return Err(e);
-    }
+    parser::parse(&raw)?;
 
     Ok(())
 }
