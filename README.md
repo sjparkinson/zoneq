@@ -2,6 +2,14 @@
 
 Query zone files.
 
+## Install
+
+```sh
+cargo install zoneq
+```
+
+Every merge to `main` is published to crates.io as `0.2.<commit count>+<sha>`, which is also what `zoneq --version` prints.
+
 ## Usage
 
 ```
