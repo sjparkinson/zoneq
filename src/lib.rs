@@ -69,3 +69,31 @@ pub fn run(opts: &Options, out: &mut impl Write) -> Result<usize, Error> {
 pub fn format_record(r: &Record) -> String {
     r.to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn opts(types: &[&str]) -> Options {
+        Options {
+            query: ".".into(),
+            file: "-".into(),
+            record_types: types.iter().map(|t| t.to_string()).collect(),
+            origin: None,
+            json: false,
+        }
+    }
+
+    #[test]
+    fn no_types_wants_everything() {
+        assert!(opts(&[]).wants_type("TXT"));
+    }
+
+    #[test]
+    fn wants_any_listed_type() {
+        let o = opts(&["A", "AAAA"]);
+        assert!(o.wants_type("A"));
+        assert!(o.wants_type("aaaa"));
+        assert!(!o.wants_type("MX"));
+    }
+}
