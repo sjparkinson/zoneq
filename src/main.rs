@@ -1,60 +1,70 @@
-extern crate docopt;
-extern crate zoneq;
-#[macro_use] extern crate nom;
+use std::io::{self, BufWriter, ErrorKind, Write};
+use std::path::PathBuf;
+use std::process::ExitCode;
 
-use docopt::Docopt;
-use std::process;
+use clap::Parser;
+use zoneq::name::Name;
+use zoneq::{Error, Options};
 
-const USAGE: &'static str = "
-zoneq
+/// Query zone files.
+///
+/// QUERY is an owner name, like `www` or `www.example.com.`. Start it with a
+/// dot to match that name and everything below it, or pass `.` to match
+/// every record.
+///
+/// Exits 0 when something matched, 1 when nothing did, 2 on error.
+#[derive(Parser)]
+#[command(version = env!("ZONEQ_VERSION"))]
+struct Cli {
+    /// Filter by record type, e.g. A, MX
+    #[arg(long = "type", value_name = "TYPE")]
+    record_type: Option<String>,
 
-Usage:
-  zoneq [--type=<type>] <query> <file>
-  zoneq -h | --help
-  zoneq --version
+    /// Origin to start from, until the file sets its own $ORIGIN
+    #[arg(long, value_name = "NAME", value_parser = parse_origin)]
+    origin: Option<Name>,
 
-Filters:
-  --type <type>     Filter query by record type.
+    /// Print matches as a JSON array
+    #[arg(long)]
+    json: bool,
 
-Options: 
-  -h, --help        Show this screen.
-  --version         Show the version.
-";
+    /// Owner name to match: `www`, `.example.com` or `.`
+    query: String,
 
-const VERSION: &'static str = env!("CARGO_PKG_VERSION");
-
-fn main() {
-    let args = Docopt::new(USAGE)
-        .and_then(|opts| opts.parse())
-        .unwrap_or_else(|e| e.exit());
-
-    let config = Config::new(&args);
-
-    if config.version {
-        println!("zoneq {}", VERSION);
-        process::exit(0);
-    }
-
-    if let Err(e) = zoneq::run(config.query, config.filename) {
-        eprintln!("Oh no! {}", e);
-        process::exit(1);
-    }
+    /// Zone file to read, or - for stdin
+    file: PathBuf,
 }
 
-struct Config<'a> {
-    query: &'a str,
-    filename: &'a str,
-    record_type: &'a str,
-    version: bool,
+fn parse_origin(raw: &str) -> Result<Name, String> {
+    Name::parse(raw, Some(&Name::root()))
 }
 
-impl<'a> Config<'a> {
-    fn new(args: &'a docopt::ArgvMap) -> Config<'a> {
-        Config {
-            query: args.get_str("<query>"),
-            filename: args.get_str("<file>"),
-            record_type: args.get_str("<type>"),
-            version: args.get_bool("--version"),
+fn main() -> ExitCode {
+    let cli = Cli::parse();
+    let opts = Options {
+        query: cli.query,
+        file: cli.file,
+        record_type: cli.record_type,
+        origin: cli.origin,
+        json: cli.json,
+    };
+
+    let mut out = BufWriter::new(io::stdout().lock());
+    // Piping into `head` and friends shouldn't look like a failure, so a
+    // broken pipe on the final flush keeps the exit code the matches earned.
+    let result = zoneq::run(&opts, &mut out).and_then(|n| match out.flush() {
+        Err(e) if e.kind() != ErrorKind::BrokenPipe => Err(Error::Output(e)),
+        _ => Ok(n),
+    });
+
+    match result {
+        Ok(0) => ExitCode::from(1),
+        Ok(_) => ExitCode::SUCCESS,
+        // Only writing matches fills the buffer, so something matched.
+        Err(Error::Output(e)) if e.kind() == ErrorKind::BrokenPipe => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("zoneq: {e}");
+            ExitCode::from(2)
         }
     }
 }

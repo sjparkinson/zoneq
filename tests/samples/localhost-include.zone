@@ -8,4 +8,4 @@ $INCLUDE example.com.zone
 
 $INCLUDE localhost-reverse.zone another-domain.com
 
-$INCLUDE redhat.com.zone; this is a comment
+$INCLUDE redhat.zone; this is a comment
