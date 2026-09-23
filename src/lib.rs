@@ -1,43 +1,72 @@
-extern crate docopt;
-#[macro_use]
-extern crate nom;
-#[macro_use]
-extern crate lazy_static;
-extern crate regex;
+pub mod error;
+mod lexer;
+pub mod name;
+pub mod query;
+mod ttl;
+pub mod zone;
 
-mod parser;
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
 
-use std::boxed::Box;
-use std::error::Error;
-use std::fs;
-use std::fs::File;
-use std::io::prelude::*;
+pub use error::Error;
+use name::Name;
+use query::Query;
+use zone::Record;
 
-type Result<T> = std::result::Result<T, Box<Error>>;
+pub struct Options {
+    pub query: String,
+    /// `-` reads from stdin.
+    pub file: PathBuf,
+    pub record_type: Option<String>,
+    /// Origin to start from, until the file sets its own `$ORIGIN`.
+    pub origin: Option<Name>,
+    pub json: bool,
+}
 
-pub fn run(_query: &str, filename: &str) -> Result<()> {
-    // Check file meta.
-    let metadata = fs::metadata(filename)?;
+/// Parses the zone, writes matching records to `out`, and returns how many
+/// there were.
+pub fn run(opts: &Options, out: &mut impl Write) -> Result<usize, Error> {
+    let origin = opts.origin.clone();
+    let zone = if opts.file == Path::new("-") {
+        zone::parse_reader(io::stdin().lock(), Path::new("<stdin>"), origin)?
+    } else {
+        zone::parse_file(&opts.file, origin)?
+    };
 
-    // Only support files.
-    if metadata.is_file() == false {
-        return Err(From::from(format!("{} is not a file.", filename)));
-    }
+    let query = Query::parse(&opts.query, zone.origin.as_ref())?;
+    let matches: Vec<&Record> = zone
+        .records
+        .iter()
+        .filter(|r| query.matches(&r.name))
+        .filter(|r| {
+            opts.record_type
+                .as_ref()
+                .is_none_or(|t| r.rtype.eq_ignore_ascii_case(t))
+        })
+        .collect();
 
-    // Keep it small...
-    if metadata.len() > 10000000 {
-        return Err(From::from(format!("{} is over 10MB!", filename)));
-    }
+    let written = if opts.json {
+        serde_json::to_writer_pretty(&mut *out, &matches)
+            .map_err(io::Error::from)
+            .and_then(|()| writeln!(out))
+    } else {
+        matches
+            .iter()
+            .try_for_each(|r| writeln!(out, "{}", format_record(r)))
+    };
+    written.map_err(Error::Output)?;
 
-    // We're going to load the zone file into this.
-    let mut raw = String::new();
+    Ok(matches.len())
+}
 
-    // Open and load the file, let errors bubble up.
-    File::open(filename)?.read_to_string(&mut raw)?;
-
-    // For now, print what we've read.
-    println!("{}", raw);
-
-    // Do the parse.
-    parser::parse((&raw[..]).as_bytes())
+/// Formats a record as a tab-separated zone file line.
+pub fn format_record(r: &Record) -> String {
+    format!(
+        "{}\t{}\t{}\t{}\t{}",
+        r.name,
+        r.ttl,
+        r.class,
+        r.rtype,
+        r.rdata.join(" ")
+    )
 }
