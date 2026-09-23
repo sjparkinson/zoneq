@@ -12,6 +12,11 @@ permissions:
   attestations: write
   artifact-metadata: write
 
+env:
+  CARGO_TERM_COLOR: always
+  TERM: xterm-256color
+  MSYSCON: mintty.exe
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
@@ -43,9 +48,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # build.rs counts commits for --version, so it needs the whole history.
           fetch-depth: 0
           persist-credentials: false
+
+      - run: echo "::add-matcher::.github/rust-matchers.json"
 
       - name: Install Rust at rust-version from Cargo.toml
         run: |
@@ -67,7 +73,7 @@ jobs:
 
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --locked --target "$TARGET" -- -D warnings
-      - run: cargo test --locked --target "$TARGET"
+      - run: cargo test --locked --target "$TARGET" -- --color always
       - run: cargo build --release --locked --target "$TARGET"
 
       - run: mkdir -p dist
@@ -93,7 +99,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # The version counts commits, so it needs the whole history.
           fetch-depth: 0
           persist-credentials: false
 
