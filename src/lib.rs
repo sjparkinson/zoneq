@@ -50,9 +50,7 @@ pub fn run(opts: &Options, out: &mut impl Write) -> Result<usize, Error> {
             .map_err(io::Error::from)
             .and_then(|()| writeln!(out))
     } else {
-        matches
-            .iter()
-            .try_for_each(|r| writeln!(out, "{}", format_record(r)))
+        matches.iter().try_for_each(|r| writeln!(out, "{r}"))
     };
     written.map_err(Error::Output)?;
 
@@ -61,12 +59,5 @@ pub fn run(opts: &Options, out: &mut impl Write) -> Result<usize, Error> {
 
 /// Formats a record as a tab-separated zone file line.
 pub fn format_record(r: &Record) -> String {
-    format!(
-        "{}\t{}\t{}\t{}\t{}",
-        r.name,
-        r.ttl,
-        r.class,
-        r.rtype,
-        r.rdata.join(" ")
-    )
+    r.to_string()
 }

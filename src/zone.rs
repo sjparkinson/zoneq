@@ -1,4 +1,5 @@
-use std::fmt::Write as _;
+use std::borrow::Cow;
+use std::fmt::{self, Write as _};
 use std::fs;
 use std::io::Read;
 use std::path::Path;
@@ -10,14 +11,65 @@ use crate::ttl::parse_ttl;
 
 const MAX_INCLUDE_DEPTH: usize = 16;
 
+const CLASSES: &[&str] = &["IN", "CH", "HS", "CS"];
+
+/// Types common enough to be worth not allocating, most common first.
+const TYPES: &[&str] = &[
+    "A",
+    "AAAA",
+    "CNAME",
+    "TXT",
+    "MX",
+    "NS",
+    "PTR",
+    "SRV",
+    "SOA",
+    "CAA",
+    "HTTPS",
+    "SVCB",
+    "DS",
+    "DNSKEY",
+    "RRSIG",
+    "NSEC",
+    "NSEC3",
+    "NSEC3PARAM",
+    "TLSA",
+    "SSHFP",
+    "NAPTR",
+    "DNAME",
+    "SPF",
+    "HINFO",
+    "LOC",
+    "CDS",
+    "CDNSKEY",
+];
+
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct Record {
     pub name: Name,
     pub ttl: u32,
-    pub class: String,
+    pub class: Cow<'static, str>,
     #[serde(rename = "type")]
-    pub rtype: String,
+    pub rtype: Cow<'static, str>,
     pub rdata: Vec<String>,
+}
+
+/// A tab-separated zone file line, with the rdata fields space-separated.
+impl fmt::Display for Record {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}\t{}\t{}\t{}\t",
+            self.name, self.ttl, self.class, self.rtype
+        )?;
+        for (i, field) in self.rdata.iter().enumerate() {
+            if i > 0 {
+                f.write_str(" ")?;
+            }
+            f.write_str(field)?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -104,8 +156,10 @@ struct State {
     origin: Option<Name>,
     default_ttl: Option<u32>,
     last_ttl: Option<u32>,
-    last_class: Option<String>,
-    last_owner: Option<Name>,
+    last_class: Option<Cow<'static, str>>,
+    /// Index into `Parser::records`, so inheriting an owner is the only
+    /// time it gets cloned.
+    last_owner: Option<usize>,
     depth: usize,
 }
 
@@ -116,14 +170,15 @@ struct Parser {
 
 impl Parser {
     fn parse(&mut self, input: &str, source: &Path, state: &mut State) -> Result<(), Error> {
-        let lines = lexer::tokenise(input).map_err(|e| Error::parse(source, e.line, e.message))?;
-        for line in &lines {
+        for line in lexer::Lines::new(input) {
+            let line = &line.map_err(|e| Error::parse(source, e.line, e.message))?;
             let first = &line.tokens[0];
             if !line.leading_blank && !first.quoted && first.text.starts_with('$') {
                 self.directive(line, source, state)?;
             } else {
-                let record = record(line, state)
+                let record = record(line, state, &self.records)
                     .map_err(|message| Error::parse(source, line.number, message))?;
+                state.last_owner = Some(self.records.len());
                 self.records.push(record);
             }
         }
@@ -140,7 +195,7 @@ impl Parser {
                 let [name] = args else {
                     return Err(fail("$ORIGIN takes one name".into()));
                 };
-                let origin = directive_origin(&name.text, state).map_err(fail)?;
+                let origin = directive_origin(name.text, state).map_err(fail)?;
                 if state.depth == 0 && self.origin.is_none() {
                     self.origin = Some(origin.clone());
                 }
@@ -150,8 +205,8 @@ impl Parser {
                 let [ttl] = args else {
                     return Err(fail("$TTL takes one value".into()));
                 };
-                let ttl = parse_ttl(&ttl.text)
-                    .ok_or_else(|| fail(format!("invalid TTL {}", ttl.text)))?;
+                let ttl =
+                    parse_ttl(ttl.text).ok_or_else(|| fail(format!("invalid TTL {}", ttl.text)))?;
                 state.default_ttl = Some(ttl);
             }
             "$INCLUDE" => {
@@ -171,11 +226,11 @@ impl Parser {
                 let mut child = state.clone();
                 child.depth += 1;
                 if let Some(origin) = origin {
-                    child.origin = Some(directive_origin(&origin.text, state).map_err(fail)?);
+                    child.origin = Some(directive_origin(origin.text, state).map_err(fail)?);
                 }
 
                 let base = source.parent().unwrap_or(Path::new(""));
-                let path = base.join(&file.text);
+                let path = base.join(file.text);
                 let input = read(&path)?;
                 self.parse(&input, &path, &mut child)?;
             }
@@ -199,29 +254,29 @@ fn directive_origin(raw: &str, state: &State) -> Result<Name, String> {
     Name::parse(raw, Some(state.origin.as_ref().unwrap_or(&root)))
 }
 
-fn record(line: &Line, state: &mut State) -> Result<Record, String> {
+fn record(line: &Line, state: &mut State, records: &[Record]) -> Result<Record, String> {
     let tokens = &line.tokens;
     let mut idx = 0;
 
     let owner = if line.leading_blank {
         state
             .last_owner
-            .clone()
+            .map(|i| records[i].name.clone())
             .ok_or("record has no owner name and there's no previous one to inherit")?
     } else {
         idx += 1;
-        Name::parse(&tokens[0].text, state.origin.as_ref())?
+        Name::parse(tokens[0].text, state.origin.as_ref())?
     };
 
     let mut ttl = None;
     let mut class = None;
     while let Some(token) = tokens.get(idx) {
         if ttl.is_none()
-            && let Some(t) = parse_ttl(&token.text)
+            && let Some(t) = parse_ttl(token.text)
         {
             ttl = Some(t);
         } else if class.is_none()
-            && let Some(c) = parse_class(&token.text)
+            && let Some(c) = parse_class(token.text)
         {
             class = Some(c);
         } else {
@@ -236,10 +291,10 @@ fn record(line: &Line, state: &mut State) -> Result<Record, String> {
     if rtype.text.starts_with(|c: char| c.is_ascii_digit()) {
         return Err(format!("invalid TTL {}", rtype.text));
     }
-    if !is_type_like(&rtype.text) {
+    if !is_type_like(rtype.text) {
         return Err(format!("expected a record type, found {}", rtype.text));
     }
-    let rtype = rtype.text.to_ascii_uppercase();
+    let rtype = known_upper(rtype.text, TYPES);
     let fields = &tokens[idx + 1..];
     if fields.is_empty() {
         return Err(format!("{rtype} record has no data"));
@@ -253,7 +308,7 @@ fn record(line: &Line, state: &mut State) -> Result<Record, String> {
         if fields.len() != 7 {
             return Err(format!("SOA needs 7 fields, found {}", fields.len()));
         }
-        let minimum = parse_ttl(&fields[6].text)
+        let minimum = parse_ttl(fields[6].text)
             .ok_or_else(|| format!("invalid SOA minimum {}", fields[6].text))?;
         // Like BIND, with no TTL to go on, the SOA minimum becomes the
         // default for this record and the ones after it.
@@ -267,7 +322,7 @@ fn record(line: &Line, state: &mut State) -> Result<Record, String> {
     }
     let class = class
         .or_else(|| state.last_class.clone())
-        .unwrap_or_else(|| "IN".to_string());
+        .unwrap_or(Cow::Borrowed("IN"));
 
     if ttl.is_some() {
         state.last_ttl = ttl;
@@ -284,7 +339,6 @@ fn record(line: &Line, state: &mut State) -> Result<Record, String> {
         .map(|(i, token)| rdata_field(token, name_fields.contains(&i), state))
         .collect::<Result<_, _>>()?;
 
-    state.last_owner = Some(owner.clone());
     Ok(Record {
         name: owner,
         ttl,
@@ -294,13 +348,22 @@ fn record(line: &Line, state: &mut State) -> Result<Record, String> {
     })
 }
 
-fn parse_class(raw: &str) -> Option<String> {
-    let upper = raw.to_ascii_uppercase();
-    let known = matches!(upper.as_str(), "IN" | "CH" | "HS" | "CS");
-    let generic = upper
-        .strip_prefix("CLASS")
-        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
-    (known || generic).then_some(upper)
+fn parse_class(raw: &str) -> Option<Cow<'static, str>> {
+    let known = CLASSES.iter().any(|c| c.eq_ignore_ascii_case(raw));
+    let generic = raw
+        .get(..5)
+        .is_some_and(|p| p.eq_ignore_ascii_case("CLASS"))
+        && raw.len() > 5
+        && raw.bytes().skip(5).all(|b| b.is_ascii_digit());
+    (known || generic).then(|| known_upper(raw, CLASSES))
+}
+
+/// `raw` in upper case, borrowed from `table` when it's listed there.
+fn known_upper(raw: &str, table: &[&'static str]) -> Cow<'static, str> {
+    match table.iter().find(|t| t.eq_ignore_ascii_case(raw)) {
+        Some(t) => Cow::Borrowed(t),
+        None => Cow::Owned(raw.to_ascii_uppercase()),
+    }
 }
 
 fn is_type_like(raw: &str) -> bool {
@@ -326,9 +389,9 @@ fn rdata_field(token: &Token, is_name: bool, state: &State) -> Result<String, St
     if token.quoted {
         Ok(format!("\"{}\"", token.text))
     } else if is_name {
-        Ok(Name::parse(&token.text, state.origin.as_ref())?.to_string())
+        Ok(Name::parse(token.text, state.origin.as_ref())?.into_string())
     } else {
-        Ok(token.text.clone())
+        Ok(token.text.to_string())
     }
 }
 
@@ -540,6 +603,13 @@ mod tests {
             ),
             ("$ORIGIN x.\n\nwww 60\n", 3, "missing record type"),
             ("$ORIGIN x.\nwww 60 A\n", 2, "A record has no data"),
+            // The first error in the file wins, even when a later one is
+            // the lexer's.
+            (
+                "$ORIGIN x.\nwww 60 A\nb TXT \"open\n",
+                2,
+                "A record has no data",
+            ),
             ("  A 192.0.2.1\n", 1, "no owner name"),
             ("www 60 A 192.0.2.1\n", 1, "relative name www"),
             (
