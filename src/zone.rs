@@ -344,7 +344,7 @@ fn rdata_field(token: &Token, is_name: bool, state: &State) -> Result<String, St
     if token.quoted {
         Ok(format!("\"{}\"", token.text))
     } else if is_name {
-        Ok(Name::parse(&token.text, state.origin.as_ref())?.to_string())
+        Ok(Name::parse(&token.text, state.origin.as_ref())?.into_string())
     } else {
         Ok(token.text.clone())
     }

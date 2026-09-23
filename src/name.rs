@@ -24,13 +24,19 @@ impl Name {
             Name(raw.to_string())
         } else {
             match origin {
-                Some(o) if o.is_root() => Name(format!("{raw}.")),
-                Some(o) => Name(format!("{raw}.{o}")),
+                Some(o) => {
+                    let suffix = if o.is_root() { "" } else { o.as_str() };
+                    let mut name = String::with_capacity(raw.len() + 1 + suffix.len());
+                    name.push_str(raw);
+                    name.push('.');
+                    name.push_str(suffix);
+                    Name(name)
+                }
                 None => return Err(format!("relative name {raw} with no origin set")),
             }
         };
 
-        if name.labels().iter().any(|l| l.is_empty()) {
+        if name.has_empty_label() {
             return Err(format!("invalid name {raw}"));
         }
         Ok(name)
@@ -62,18 +68,55 @@ impl Name {
     }
 
     pub fn is_at_or_below(&self, ancestor: &Name) -> bool {
-        let ours = self.labels();
-        let theirs = ancestor.labels();
-        ours.len() >= theirs.len()
-            && ours
-                .iter()
-                .rev()
-                .zip(theirs.iter().rev())
-                .all(|(a, b)| a.eq_ignore_ascii_case(b))
+        if ancestor.is_root() {
+            return true;
+        }
+        let (ours, theirs) = (self.0.as_bytes(), ancestor.0.as_bytes());
+        let Some(split) = ours.len().checked_sub(theirs.len()) else {
+            return false;
+        };
+        // The match has to start a label: at the very beginning, or just
+        // after a dot that isn't escaped.
+        ours[split..].eq_ignore_ascii_case(theirs)
+            && (split == 0 || ends_with_unescaped_dot(&self.0[..split]))
     }
 
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    pub fn into_string(self) -> String {
+        self.0
+    }
+
+    /// Like checking `labels()` for an empty one, without building the list.
+    fn has_empty_label(&self) -> bool {
+        if self.is_root() {
+            return false;
+        }
+        let bytes = &self.0.as_bytes()[..self.0.len() - 1];
+        let mut len = 0;
+        let mut i = 0;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'\\' => {
+                    i += 2;
+                    len += 2;
+                }
+                b'.' => {
+                    if len == 0 {
+                        return true;
+                    }
+                    i += 1;
+                    len = 0;
+                }
+                _ => {
+                    i += 1;
+                    len += 1;
+                }
+            }
+        }
+        len == 0
     }
 
     fn is_root(&self) -> bool {
@@ -164,6 +207,8 @@ mod tests {
     #[test]
     fn rejects_empty_labels() {
         assert!(Name::parse("a..b.", None).is_err());
+        assert!(Name::parse("..", None).is_err());
+        assert!(Name::parse(r"a\..b.", None).is_ok());
     }
 
     #[test]
@@ -179,5 +224,8 @@ mod tests {
         assert!(!name("badexample.com.").is_at_or_below(&zone));
         assert!(!name("com.").is_at_or_below(&zone));
         assert!(name("com.").is_at_or_below(&Name::root()));
+        assert!(!name(r"a\.example.com.").is_at_or_below(&zone));
+        assert!(name(r"a\\.example.com.").is_at_or_below(&zone));
+        assert!(!name("example.com.").is_at_or_below(&name("a.example.com.")));
     }
 }
