@@ -1,4 +1,4 @@
-use std::fmt::Write as _;
+use std::fmt::{self, Write as _};
 use std::fs;
 use std::io::Read;
 use std::path::Path;
@@ -18,6 +18,24 @@ pub struct Record {
     #[serde(rename = "type")]
     pub rtype: String,
     pub rdata: Vec<String>,
+}
+
+/// A tab-separated zone file line, with the rdata fields space-separated.
+impl fmt::Display for Record {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}\t{}\t{}\t{}\t",
+            self.name, self.ttl, self.class, self.rtype
+        )?;
+        for (i, field) in self.rdata.iter().enumerate() {
+            if i > 0 {
+                f.write_str(" ")?;
+            }
+            f.write_str(field)?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
