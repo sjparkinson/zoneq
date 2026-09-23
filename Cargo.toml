@@ -12,6 +12,11 @@ license = "MIT"
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+dhat = { version = "0.3", optional = true }
+
+[features]
+# Counts heap allocations into dhat-heap.json. For profiling only.
+dhat-heap = ["dep:dhat"]
 
 [dev-dependencies]
 assert_cmd = "2"
@@ -33,3 +38,14 @@ todo = "warn"
 lto = true
 codegen-units = 1
 strip = true
+
+# Release codegen with symbols, for samply and friends.
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = false
+
+# Keep symbols in benches too, so profiling a criterion run is readable.
+[profile.bench]
+debug = true
+strip = false

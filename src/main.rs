@@ -6,6 +6,10 @@ use clap::Parser;
 use zoneq::name::Name;
 use zoneq::{Error, Options};
 
+#[cfg(feature = "dhat-heap")]
+#[global_allocator]
+static ALLOC: dhat::Alloc = dhat::Alloc;
+
 /// Query zone files.
 ///
 /// QUERY is an owner name, like `www` or `www.example.com.`. Start it with a
@@ -40,6 +44,10 @@ fn parse_origin(raw: &str) -> Result<Name, String> {
 }
 
 fn main() -> ExitCode {
+    // Writes dhat-heap.json when dropped at the end of main.
+    #[cfg(feature = "dhat-heap")]
+    let _profiler = dhat::Profiler::new_heap();
+
     let cli = Cli::parse();
     let opts = Options {
         query: cli.query,
