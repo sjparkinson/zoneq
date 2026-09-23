@@ -17,10 +17,22 @@ pub struct Options {
     pub query: String,
     /// `-` reads from stdin.
     pub file: PathBuf,
-    pub record_type: Option<String>,
+    /// Record types to keep, uppercased. Empty keeps every type.
+    pub record_types: Vec<String>,
     /// Origin to start from, until the file sets its own `$ORIGIN`.
     pub origin: Option<Name>,
     pub json: bool,
+}
+
+impl Options {
+    /// Whether `rtype` is one of the types asked for, ignoring case.
+    pub fn wants_type(&self, rtype: &str) -> bool {
+        self.record_types.is_empty()
+            || self
+                .record_types
+                .iter()
+                .any(|t| t.eq_ignore_ascii_case(rtype))
+    }
 }
 
 /// Parses the zone, writes matching records to `out`, and returns how many
@@ -38,11 +50,7 @@ pub fn run(opts: &Options, out: &mut impl Write) -> Result<usize, Error> {
         .records
         .iter()
         .filter(|r| query.matches(&r.name))
-        .filter(|r| {
-            opts.record_type
-                .as_ref()
-                .is_none_or(|t| r.rtype.eq_ignore_ascii_case(t))
-        })
+        .filter(|r| opts.wants_type(&r.rtype))
         .collect();
 
     let written = if opts.json {
@@ -60,4 +68,32 @@ pub fn run(opts: &Options, out: &mut impl Write) -> Result<usize, Error> {
 /// Formats a record as a tab-separated zone file line.
 pub fn format_record(r: &Record) -> String {
     r.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn opts(types: &[&str]) -> Options {
+        Options {
+            query: ".".into(),
+            file: "-".into(),
+            record_types: types.iter().map(|t| t.to_string()).collect(),
+            origin: None,
+            json: false,
+        }
+    }
+
+    #[test]
+    fn no_types_wants_everything() {
+        assert!(opts(&[]).wants_type("TXT"));
+    }
+
+    #[test]
+    fn wants_any_listed_type() {
+        let o = opts(&["A", "AAAA"]);
+        assert!(o.wants_type("A"));
+        assert!(o.wants_type("aaaa"));
+        assert!(!o.wants_type("MX"));
+    }
 }

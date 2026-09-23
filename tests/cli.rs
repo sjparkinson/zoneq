@@ -148,3 +148,47 @@ fn relative_queries_use_the_soa_owner() {
 fn usage_errors_exit_2() {
     zoneq().arg("www").assert().code(2);
 }
+
+const MAIL_A_AND_AAAA: &str =
+    "mail.example.com.\t86400\tIN\tA\t10.0.1.5\nmail.example.com.\t86400\tIN\tAAAA\taaaa:bbbb::5\n";
+
+#[test]
+fn type_takes_a_list() {
+    zoneq()
+        .args(["--type", "a,Aaaa", "mail", "example.zone"])
+        .assert()
+        .success()
+        .stdout(MAIL_A_AND_AAAA);
+}
+
+#[test]
+fn type_can_repeat() {
+    zoneq()
+        .args(["--type", "A", "--type", "aaaa", "mail", "example.zone"])
+        .assert()
+        .success()
+        .stdout(MAIL_A_AND_AAAA);
+    zoneq()
+        .args(["--type", "mx,ns", "--type", "cname", ".", "example.zone"])
+        .assert()
+        .success()
+        .stdout(predicate::function(|out: &str| {
+            out.lines().count() == 6
+                && out.lines().all(|l| {
+                    ["\tMX\t", "\tNS\t", "\tCNAME\t"]
+                        .iter()
+                        .any(|t| l.contains(t))
+                })
+        }));
+}
+
+#[test]
+fn empty_type_exits_2() {
+    for types in ["a,,mx", "a,", ""] {
+        zoneq()
+            .args(["--type", types, ".", "example.zone"])
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains("empty record type"));
+    }
+}

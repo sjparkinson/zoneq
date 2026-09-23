@@ -20,9 +20,9 @@ static ALLOC: dhat::Alloc = dhat::Alloc;
 #[derive(Parser)]
 #[command(version = env!("ZONEQ_VERSION"))]
 struct Cli {
-    /// Filter by record type, e.g. A, MX
-    #[arg(long = "type", value_name = "TYPE")]
-    record_type: Option<String>,
+    /// Filter by record type, e.g. MX, or several like A,AAAA
+    #[arg(long = "type", value_name = "TYPE", value_delimiter = ',', value_parser = parse_type)]
+    record_types: Vec<String>,
 
     /// Origin to start from, until the file sets its own $ORIGIN
     #[arg(long, value_name = "NAME", value_parser = parse_origin)]
@@ -39,6 +39,13 @@ struct Cli {
     file: PathBuf,
 }
 
+fn parse_type(raw: &str) -> Result<String, String> {
+    if raw.is_empty() {
+        return Err("empty record type".into());
+    }
+    Ok(raw.to_ascii_uppercase())
+}
+
 fn parse_origin(raw: &str) -> Result<Name, String> {
     Name::parse(raw, Some(&Name::root()))
 }
@@ -52,7 +59,7 @@ fn main() -> ExitCode {
     let opts = Options {
         query: cli.query,
         file: cli.file,
-        record_type: cli.record_type,
+        record_types: cli.record_types,
         origin: cli.origin,
         json: cli.json,
     };
