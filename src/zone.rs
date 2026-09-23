@@ -123,7 +123,9 @@ struct State {
     default_ttl: Option<u32>,
     last_ttl: Option<u32>,
     last_class: Option<String>,
-    last_owner: Option<Name>,
+    /// Index into `Parser::records`, so inheriting an owner is the only
+    /// time it gets cloned.
+    last_owner: Option<usize>,
     depth: usize,
 }
 
@@ -140,8 +142,9 @@ impl Parser {
             if !line.leading_blank && !first.quoted && first.text.starts_with('$') {
                 self.directive(line, source, state)?;
             } else {
-                let record = record(line, state)
+                let record = record(line, state, &self.records)
                     .map_err(|message| Error::parse(source, line.number, message))?;
+                state.last_owner = Some(self.records.len());
                 self.records.push(record);
             }
         }
@@ -217,14 +220,14 @@ fn directive_origin(raw: &str, state: &State) -> Result<Name, String> {
     Name::parse(raw, Some(state.origin.as_ref().unwrap_or(&root)))
 }
 
-fn record(line: &Line, state: &mut State) -> Result<Record, String> {
+fn record(line: &Line, state: &mut State, records: &[Record]) -> Result<Record, String> {
     let tokens = &line.tokens;
     let mut idx = 0;
 
     let owner = if line.leading_blank {
         state
             .last_owner
-            .clone()
+            .map(|i| records[i].name.clone())
             .ok_or("record has no owner name and there's no previous one to inherit")?
     } else {
         idx += 1;
@@ -302,7 +305,6 @@ fn record(line: &Line, state: &mut State) -> Result<Record, String> {
         .map(|(i, token)| rdata_field(token, name_fields.contains(&i), state))
         .collect::<Result<_, _>>()?;
 
-    state.last_owner = Some(owner.clone());
     Ok(Record {
         name: owner,
         ttl,
