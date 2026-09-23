@@ -57,8 +57,9 @@ pub struct Record {
 /// A tab-separated zone file line, with the rdata fields space-separated.
 impl fmt::Display for Record {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // An owner starting with `$` would read back as a directive.
-        if self.name.as_str().starts_with('$') {
+        // An owner starting with `$` would read back as a directive, and
+        // one starting with a byte order mark would lose it on line one.
+        if self.name.as_str().starts_with(['$', '\u{feff}']) {
             f.write_str("\\")?;
         }
         write!(
@@ -460,6 +461,15 @@ mod tests {
     fn owner_starting_with_a_dollar_is_escaped() {
         let zone = parse("$ORIGIN $x.\n@ 60 A 192.0.2.1\n").unwrap();
         assert_eq!(lines(&zone), ["\\$x.\t60\tIN\tA\t192.0.2.1"]);
+    }
+
+    #[test]
+    fn owner_starting_with_a_byte_order_mark_is_escaped() {
+        let zone = parse("$ORIGIN \u{feff}x.\n@ 60 A 192.0.2.1\n").unwrap();
+        let printed = lines(&zone);
+        assert_eq!(printed, ["\\\u{feff}x.\t60\tIN\tA\t192.0.2.1"]);
+        let reparsed = parse(&printed.join("\n")).unwrap();
+        assert_eq!(lines(&reparsed), printed);
     }
 
     #[test]
