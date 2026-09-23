@@ -233,3 +233,103 @@ fn data_skips_fields_that_arent_names() {
         .assert()
         .code(1);
 }
+
+#[test]
+fn resolve_follows_cnames() {
+    zoneq()
+        .args(["--resolve", "--type", "a", "www", "example.zone"])
+        .assert()
+        .success()
+        .stdout(concat!(
+            "www.example.com.\t86400\tIN\tCNAME\tservices.example.com.\n",
+            "services.example.com.\t86400\tIN\tA\t10.0.1.10\n",
+            "services.example.com.\t86400\tIN\tA\t10.0.1.11\n",
+        ));
+}
+
+#[test]
+fn resolve_expands_wildcards() {
+    zoneq()
+        .args([
+            "--resolve",
+            "--type",
+            "aaaa",
+            "bob.users",
+            "tests/samples/resolve.zone",
+        ])
+        .assert()
+        .success()
+        .stdout(concat!(
+            "bob.users.example.net.\t3600\tIN\tCNAME\twww.example.net.\n",
+            "www.example.net.\t3600\tIN\tAAAA\t2001:db8::10\n",
+        ));
+}
+
+#[test]
+fn resolve_refers_delegations() {
+    zoneq()
+        .args([
+            "--resolve",
+            "--type",
+            "mx",
+            "host.lab",
+            "tests/samples/resolve.zone",
+        ])
+        .assert()
+        .success()
+        .stdout(concat!(
+            "lab.example.net.\t3600\tIN\tNS\tns.lab.example.net.\n",
+            "lab.example.net.\t3600\tIN\tNS\tns.example.org.\n",
+            "ns.lab.example.net.\t3600\tIN\tA\t192.0.2.53\n",
+        ));
+}
+
+#[test]
+fn resolve_nxdomain_and_nodata_exit_1() {
+    // staff.users is an empty non-terminal, so it exists with no data and
+    // hides the wildcard from the names below it.
+    for query in ["bob.staff.users", "staff.users", "nope"] {
+        zoneq()
+            .args(["--resolve", query, "tests/samples/resolve.zone"])
+            .assert()
+            .code(1)
+            .stdout("")
+            .stderr("");
+    }
+    zoneq()
+        .args([
+            "--resolve",
+            "--json",
+            "--type",
+            "mx",
+            "www",
+            "tests/samples/resolve.zone",
+        ])
+        .assert()
+        .code(1)
+        .stdout("[]\n");
+}
+
+#[test]
+fn resolve_needs_one_name_inside_the_zone() {
+    for (query, message) in [
+        (".example.net", "not a subtree"),
+        (".", "not a subtree"),
+        ("www.example.org.", "outside the zone example.net."),
+    ] {
+        zoneq()
+            .args(["--resolve", query, "tests/samples/resolve.zone"])
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains(message));
+    }
+}
+
+#[test]
+fn resolve_and_data_conflict() {
+    zoneq()
+        .args(["--resolve", "--data", "services", "www", "example.zone"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("cannot be used with"));
+}

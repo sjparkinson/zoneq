@@ -68,6 +68,7 @@ fn bench_run(c: &mut Criterion) {
             origin: None,
             json,
             data: None,
+            resolve: false,
         };
         let name = if json { "json" } else { "text" };
         group.bench_function(name, |b| b.iter(|| run(&opts, &mut io::sink()).unwrap()));

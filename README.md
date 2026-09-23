@@ -24,6 +24,7 @@ Options:
       --origin <NAME>   Origin to start from, until the file sets its own $ORIGIN
       --json            Print matches as a JSON array
       --data <NAME|IP>  Only match records pointing at this name or IP address
+      --resolve         Answer like the zone's server would, following CNAMEs and wildcards
   -h, --help            Print help (see more with '--help')
   -V, --version         Print version
 ```
@@ -71,6 +72,33 @@ $ zoneq --data 10.0.1.5 . example.zone
 mail.example.com.	86400	IN	A	10.0.1.5
 
 $ cat example.zone | zoneq --type ns . -
+```
+
+## Answering like a server
+
+`--resolve` stops matching owner names and answers the query the way the zone's authoritative server would, following [RFC 1034 § 4.3.2](https://tools.ietf.org/html/rfc1034#section-4.3.2) and the wildcard rules in [RFC 4592](https://tools.ietf.org/html/rfc4592). The query has to be a single name inside the zone, and `--type` becomes the question's type, with no `--type` meaning every type, like ANY.
+
+- CNAMEs are followed while they stay inside the zone, and the output is the chain in order, then the records at the end of it. A chain that loops, or runs past 16 CNAMEs, stops there.
+- Names with no records of their own but something below them (empty non-terminals) exist, so they answer with no data rather than not existing.
+- Otherwise a wildcard directly below the closest existing name answers instead, with the owner rewritten to the query. Empty non-terminals count as existing here too, which is how they hide a wildcard above them.
+- A name at or below a delegation gets a referral: the NS records at the cut, then any A and AAAA glue in the zone for them. Asking for only DS at the cut gets the parent's DS records.
+
+When the name doesn't exist, or has nothing of that type, it prints nothing and exits 1. A CNAME chain that ends somewhere empty still prints the CNAMEs and exits 0, the same as a server putting them in the answer section. DNAME isn't followed.
+
+```sh
+$ zoneq --resolve --type a www example.zone
+www.example.com.	86400	IN	CNAME	services.example.com.
+services.example.com.	86400	IN	A	10.0.1.10
+services.example.com.	86400	IN	A	10.0.1.11
+
+$ zoneq --resolve --type aaaa bob.users tests/samples/resolve.zone
+bob.users.example.net.	3600	IN	CNAME	www.example.net.
+www.example.net.	3600	IN	AAAA	2001:db8::10
+
+$ zoneq --resolve host.lab tests/samples/resolve.zone
+lab.example.net.	3600	IN	NS	ns.lab.example.net.
+lab.example.net.	3600	IN	NS	ns.example.org.
+ns.lab.example.net.	3600	IN	A	192.0.2.53
 ```
 
 ## What it understands
