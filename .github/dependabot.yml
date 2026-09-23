@@ -14,3 +14,10 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+  - package-ecosystem: cargo
+    directory: /fuzz
+    schedule:
+      interval: monthly
+    groups:
+      fuzz:
+        patterns: ["*"]
