@@ -170,8 +170,8 @@ struct Parser {
 
 impl Parser {
     fn parse(&mut self, input: &str, source: &Path, state: &mut State) -> Result<(), Error> {
-        let lines = lexer::tokenise(input).map_err(|e| Error::parse(source, e.line, e.message))?;
-        for line in &lines {
+        for line in lexer::Lines::new(input) {
+            let line = &line.map_err(|e| Error::parse(source, e.line, e.message))?;
             let first = &line.tokens[0];
             if !line.leading_blank && !first.quoted && first.text.starts_with('$') {
                 self.directive(line, source, state)?;
@@ -195,7 +195,7 @@ impl Parser {
                 let [name] = args else {
                     return Err(fail("$ORIGIN takes one name".into()));
                 };
-                let origin = directive_origin(&name.text, state).map_err(fail)?;
+                let origin = directive_origin(name.text, state).map_err(fail)?;
                 if state.depth == 0 && self.origin.is_none() {
                     self.origin = Some(origin.clone());
                 }
@@ -205,8 +205,8 @@ impl Parser {
                 let [ttl] = args else {
                     return Err(fail("$TTL takes one value".into()));
                 };
-                let ttl = parse_ttl(&ttl.text)
-                    .ok_or_else(|| fail(format!("invalid TTL {}", ttl.text)))?;
+                let ttl =
+                    parse_ttl(ttl.text).ok_or_else(|| fail(format!("invalid TTL {}", ttl.text)))?;
                 state.default_ttl = Some(ttl);
             }
             "$INCLUDE" => {
@@ -226,11 +226,11 @@ impl Parser {
                 let mut child = state.clone();
                 child.depth += 1;
                 if let Some(origin) = origin {
-                    child.origin = Some(directive_origin(&origin.text, state).map_err(fail)?);
+                    child.origin = Some(directive_origin(origin.text, state).map_err(fail)?);
                 }
 
                 let base = source.parent().unwrap_or(Path::new(""));
-                let path = base.join(&file.text);
+                let path = base.join(file.text);
                 let input = read(&path)?;
                 self.parse(&input, &path, &mut child)?;
             }
@@ -265,18 +265,18 @@ fn record(line: &Line, state: &mut State, records: &[Record]) -> Result<Record, 
             .ok_or("record has no owner name and there's no previous one to inherit")?
     } else {
         idx += 1;
-        Name::parse(&tokens[0].text, state.origin.as_ref())?
+        Name::parse(tokens[0].text, state.origin.as_ref())?
     };
 
     let mut ttl = None;
     let mut class = None;
     while let Some(token) = tokens.get(idx) {
         if ttl.is_none()
-            && let Some(t) = parse_ttl(&token.text)
+            && let Some(t) = parse_ttl(token.text)
         {
             ttl = Some(t);
         } else if class.is_none()
-            && let Some(c) = parse_class(&token.text)
+            && let Some(c) = parse_class(token.text)
         {
             class = Some(c);
         } else {
@@ -291,10 +291,10 @@ fn record(line: &Line, state: &mut State, records: &[Record]) -> Result<Record, 
     if rtype.text.starts_with(|c: char| c.is_ascii_digit()) {
         return Err(format!("invalid TTL {}", rtype.text));
     }
-    if !is_type_like(&rtype.text) {
+    if !is_type_like(rtype.text) {
         return Err(format!("expected a record type, found {}", rtype.text));
     }
-    let rtype = known_upper(&rtype.text, TYPES);
+    let rtype = known_upper(rtype.text, TYPES);
     let fields = &tokens[idx + 1..];
     if fields.is_empty() {
         return Err(format!("{rtype} record has no data"));
@@ -308,7 +308,7 @@ fn record(line: &Line, state: &mut State, records: &[Record]) -> Result<Record, 
         if fields.len() != 7 {
             return Err(format!("SOA needs 7 fields, found {}", fields.len()));
         }
-        let minimum = parse_ttl(&fields[6].text)
+        let minimum = parse_ttl(fields[6].text)
             .ok_or_else(|| format!("invalid SOA minimum {}", fields[6].text))?;
         // Like BIND, with no TTL to go on, the SOA minimum becomes the
         // default for this record and the ones after it.
@@ -389,9 +389,9 @@ fn rdata_field(token: &Token, is_name: bool, state: &State) -> Result<String, St
     if token.quoted {
         Ok(format!("\"{}\"", token.text))
     } else if is_name {
-        Ok(Name::parse(&token.text, state.origin.as_ref())?.into_string())
+        Ok(Name::parse(token.text, state.origin.as_ref())?.into_string())
     } else {
-        Ok(token.text.clone())
+        Ok(token.text.to_string())
     }
 }
 
@@ -603,6 +603,13 @@ mod tests {
             ),
             ("$ORIGIN x.\n\nwww 60\n", 3, "missing record type"),
             ("$ORIGIN x.\nwww 60 A\n", 2, "A record has no data"),
+            // The first error in the file wins, even when a later one is
+            // the lexer's.
+            (
+                "$ORIGIN x.\nwww 60 A\nb TXT \"open\n",
+                2,
+                "A record has no data",
+            ),
             ("  A 192.0.2.1\n", 1, "no owner name"),
             ("www 60 A 192.0.2.1\n", 1, "relative name www"),
             (
