@@ -88,6 +88,37 @@ jobs:
         with:
           subject-path: ${{ env.DIST }}
 
+  fuzz:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - run: rustup toolchain install nightly --profile minimal
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/bin/cargo-fuzz
+            ~/.cargo/registry
+            ~/.cargo/git
+            fuzz/target
+          key: fuzz-${{ hashFiles('fuzz/Cargo.lock', 'Cargo.toml') }}
+          restore-keys: fuzz-
+
+      - run: command -v cargo-fuzz || cargo install cargo-fuzz --locked
+      - run: mkdir -p fuzz/corpus/parse
+      - run: cargo +nightly fuzz run parse fuzz/corpus/parse tests/samples -- -dict=fuzz/zone.dict -max_total_time=60
+
+      - if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts
+
   publish:
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

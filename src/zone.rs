@@ -57,6 +57,10 @@ pub struct Record {
 /// A tab-separated zone file line, with the rdata fields space-separated.
 impl fmt::Display for Record {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // An owner starting with `$` would read back as a directive.
+        if self.name.as_str().starts_with('$') {
+            f.write_str("\\")?;
+        }
         write!(
             f,
             "{}\t{}\t{}\t{}\t",
@@ -195,7 +199,7 @@ impl Parser {
                 let [name] = args else {
                     return Err(fail("$ORIGIN takes one name".into()));
                 };
-                let origin = directive_origin(name.text, state).map_err(fail)?;
+                let origin = directive_origin(name, state).map_err(fail)?;
                 if state.depth == 0 && self.origin.is_none() {
                     self.origin = Some(origin.clone());
                 }
@@ -226,7 +230,7 @@ impl Parser {
                 let mut child = state.clone();
                 child.depth += 1;
                 if let Some(origin) = origin {
-                    child.origin = Some(directive_origin(origin.text, state).map_err(fail)?);
+                    child.origin = Some(directive_origin(origin, state).map_err(fail)?);
                 }
 
                 let base = source.parent().unwrap_or(Path::new(""));
@@ -249,9 +253,18 @@ impl Parser {
 /// name with no origin set is an error, but plenty of real files (like
 /// `tests/samples/redhat.zone`) write `$ORIGIN domain.com` without the dot,
 /// so with no origin it's read as absolute.
-fn directive_origin(raw: &str, state: &State) -> Result<Name, String> {
+fn directive_origin(token: &Token, state: &State) -> Result<Name, String> {
     let root = Name::root();
-    Name::parse(raw, Some(state.origin.as_ref().unwrap_or(&root)))
+    parse_name(token, Some(state.origin.as_ref().unwrap_or(&root)))
+}
+
+/// Quotes are for text. A quoted name could hold spaces, and then it
+/// wouldn't print back out as a single token.
+fn parse_name(token: &Token, origin: Option<&Name>) -> Result<Name, String> {
+    if token.quoted {
+        return Err(format!("expected a name, found \"{}\"", token.text));
+    }
+    Name::parse(token.text, origin)
 }
 
 fn record(line: &Line, state: &mut State, records: &[Record]) -> Result<Record, String> {
@@ -265,7 +278,7 @@ fn record(line: &Line, state: &mut State, records: &[Record]) -> Result<Record, 
             .ok_or("record has no owner name and there's no previous one to inherit")?
     } else {
         idx += 1;
-        Name::parse(tokens[0].text, state.origin.as_ref())?
+        parse_name(&tokens[0], state.origin.as_ref())?
     };
 
     let mut ttl = None;
@@ -386,10 +399,10 @@ fn name_fields(rtype: &str) -> &'static [usize] {
 }
 
 fn rdata_field(token: &Token, is_name: bool, state: &State) -> Result<String, String> {
-    if token.quoted {
+    if is_name {
+        Ok(parse_name(token, state.origin.as_ref())?.into_string())
+    } else if token.quoted {
         Ok(format!("\"{}\"", token.text))
-    } else if is_name {
-        Ok(Name::parse(token.text, state.origin.as_ref())?.into_string())
     } else {
         Ok(token.text.to_string())
     }
@@ -441,6 +454,12 @@ mod tests {
                 "c.example.com.\t5\tCH\tTXT\tx",
             ]
         );
+    }
+
+    #[test]
+    fn owner_starting_with_a_dollar_is_escaped() {
+        let zone = parse("$ORIGIN $x.\n@ 60 A 192.0.2.1\n").unwrap();
+        assert_eq!(lines(&zone), ["\\$x.\t60\tIN\tA\t192.0.2.1"]);
     }
 
     #[test]
@@ -612,6 +631,9 @@ mod tests {
             ),
             ("  A 192.0.2.1\n", 1, "no owner name"),
             ("www 60 A 192.0.2.1\n", 1, "relative name www"),
+            ("\"a b.\" 60 A 192.0.2.1\n", 1, "expected a name"),
+            ("$ORIGIN \"a b.\"\n", 1, "expected a name"),
+            ("$ORIGIN x.\n@ 60 CNAME \"a b\"\n", 2, "expected a name"),
             (
                 "$ORIGIN x.\n@ 60 SOA ns host 1 2 3\n",
                 2,

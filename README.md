@@ -93,6 +93,17 @@ To count heap allocations, build with the `dhat-heap` feature. It prints a summa
 cargo run --profile profiling --features dhat-heap -- . target/bench-1m.zone > /dev/null
 ```
 
+## Fuzzing
+
+The parser has a [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz) target, which needs nightly Rust. It checks the parser doesn't panic on any input, and that every zone it accepts prints back out as lines that parse to the same records. Seed it with the sample zones and the dictionary of zone file syntax:
+
+```sh
+cargo install cargo-fuzz
+cargo +nightly fuzz run parse fuzz/corpus/parse tests/samples -- -dict=fuzz/zone.dict
+```
+
+Crashes land in `fuzz/artifacts/parse/`. Pass one in place of the corpus directories to replay it.
+
 ## Further Reading
 
 * [The zone file format, RFC 1035 § 5](https://tools.ietf.org/html/rfc1035#section-5)
