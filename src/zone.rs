@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::fmt::{self, Write as _};
 use std::fs;
 use std::io::Read;
@@ -10,13 +11,46 @@ use crate::ttl::parse_ttl;
 
 const MAX_INCLUDE_DEPTH: usize = 16;
 
+const CLASSES: &[&str] = &["IN", "CH", "HS", "CS"];
+
+/// Types common enough to be worth not allocating, most common first.
+const TYPES: &[&str] = &[
+    "A",
+    "AAAA",
+    "CNAME",
+    "TXT",
+    "MX",
+    "NS",
+    "PTR",
+    "SRV",
+    "SOA",
+    "CAA",
+    "HTTPS",
+    "SVCB",
+    "DS",
+    "DNSKEY",
+    "RRSIG",
+    "NSEC",
+    "NSEC3",
+    "NSEC3PARAM",
+    "TLSA",
+    "SSHFP",
+    "NAPTR",
+    "DNAME",
+    "SPF",
+    "HINFO",
+    "LOC",
+    "CDS",
+    "CDNSKEY",
+];
+
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct Record {
     pub name: Name,
     pub ttl: u32,
-    pub class: String,
+    pub class: Cow<'static, str>,
     #[serde(rename = "type")]
-    pub rtype: String,
+    pub rtype: Cow<'static, str>,
     pub rdata: Vec<String>,
 }
 
@@ -122,7 +156,7 @@ struct State {
     origin: Option<Name>,
     default_ttl: Option<u32>,
     last_ttl: Option<u32>,
-    last_class: Option<String>,
+    last_class: Option<Cow<'static, str>>,
     /// Index into `Parser::records`, so inheriting an owner is the only
     /// time it gets cloned.
     last_owner: Option<usize>,
@@ -260,7 +294,7 @@ fn record(line: &Line, state: &mut State, records: &[Record]) -> Result<Record, 
     if !is_type_like(&rtype.text) {
         return Err(format!("expected a record type, found {}", rtype.text));
     }
-    let rtype = rtype.text.to_ascii_uppercase();
+    let rtype = known_upper(&rtype.text, TYPES);
     let fields = &tokens[idx + 1..];
     if fields.is_empty() {
         return Err(format!("{rtype} record has no data"));
@@ -288,7 +322,7 @@ fn record(line: &Line, state: &mut State, records: &[Record]) -> Result<Record, 
     }
     let class = class
         .or_else(|| state.last_class.clone())
-        .unwrap_or_else(|| "IN".to_string());
+        .unwrap_or(Cow::Borrowed("IN"));
 
     if ttl.is_some() {
         state.last_ttl = ttl;
@@ -314,13 +348,22 @@ fn record(line: &Line, state: &mut State, records: &[Record]) -> Result<Record, 
     })
 }
 
-fn parse_class(raw: &str) -> Option<String> {
-    let upper = raw.to_ascii_uppercase();
-    let known = matches!(upper.as_str(), "IN" | "CH" | "HS" | "CS");
-    let generic = upper
-        .strip_prefix("CLASS")
-        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
-    (known || generic).then_some(upper)
+fn parse_class(raw: &str) -> Option<Cow<'static, str>> {
+    let known = CLASSES.iter().any(|c| c.eq_ignore_ascii_case(raw));
+    let generic = raw
+        .get(..5)
+        .is_some_and(|p| p.eq_ignore_ascii_case("CLASS"))
+        && raw.len() > 5
+        && raw.bytes().skip(5).all(|b| b.is_ascii_digit());
+    (known || generic).then(|| known_upper(raw, CLASSES))
+}
+
+/// `raw` in upper case, borrowed from `table` when it's listed there.
+fn known_upper(raw: &str, table: &[&'static str]) -> Cow<'static, str> {
+    match table.iter().find(|t| t.eq_ignore_ascii_case(raw)) {
+        Some(t) => Cow::Borrowed(t),
+        None => Cow::Owned(raw.to_ascii_uppercase()),
+    }
 }
 
 fn is_type_like(raw: &str) -> bool {
