@@ -386,7 +386,7 @@ fn is_type_like(raw: &str) -> bool {
 }
 
 /// Which rdata fields hold domain names that should be made absolute.
-fn name_fields(rtype: &str) -> &'static [usize] {
+pub(crate) fn name_fields(rtype: &str) -> &'static [usize] {
     match rtype {
         "NS" | "CNAME" | "PTR" | "DNAME" | "MB" | "MG" | "MR" | "NSEC" => &[0],
         "MX" | "AFSDB" | "RT" | "KX" | "LP" | "SVCB" | "HTTPS" => &[1],

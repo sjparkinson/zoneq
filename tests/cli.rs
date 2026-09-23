@@ -192,3 +192,44 @@ fn empty_type_exits_2() {
             .stderr(predicate::str::contains("empty record type"));
     }
 }
+
+#[test]
+fn data_finds_what_points_at_a_name() {
+    zoneq()
+        .args(["--data", "services", ".", "example.zone"])
+        .assert()
+        .success()
+        .stdout(concat!(
+            "ftp.example.com.\t86400\tIN\tCNAME\tservices.example.com.\n",
+            "www.example.com.\t86400\tIN\tCNAME\tservices.example.com.\n",
+        ));
+    zoneq()
+        .args([
+            "--data",
+            ".example.com",
+            "--type",
+            "mx",
+            "@",
+            "example.zone",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::function(|out: &str| out.lines().count() == 2));
+}
+
+#[test]
+fn data_finds_what_points_at_an_address() {
+    zoneq()
+        .args(["--data", "aaaa:bbbb:0:0::5", ".", "example.zone"])
+        .assert()
+        .success()
+        .stdout("mail.example.com.\t86400\tIN\tAAAA\taaaa:bbbb::5\n");
+}
+
+#[test]
+fn data_skips_fields_that_arent_names() {
+    zoneq()
+        .args(["--data", "10", ".", "example.zone"])
+        .assert()
+        .code(1);
+}

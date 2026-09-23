@@ -32,6 +32,10 @@ struct Cli {
     #[arg(long)]
     json: bool,
 
+    /// Only match records pointing at this name or IP address
+    #[arg(long, value_name = "NAME|IP")]
+    data: Option<String>,
+
     /// Owner name to match: `www`, `.example.com` or `.`
     query: String,
 
@@ -62,6 +66,7 @@ fn main() -> ExitCode {
         record_types: cli.record_types,
         origin: cli.origin,
         json: cli.json,
+        data: cli.data,
     };
 
     let mut out = BufWriter::new(io::stdout().lock());

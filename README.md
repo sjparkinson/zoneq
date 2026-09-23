@@ -20,11 +20,12 @@ Arguments:
   <FILE>   Zone file to read, or - for stdin
 
 Options:
-      --type <TYPE>    Filter by record type, e.g. MX, or several like A,AAAA
-      --origin <NAME>  Origin to start from, until the file sets its own $ORIGIN
-      --json           Print matches as a JSON array
-  -h, --help           Print help (see more with '--help')
-  -V, --version        Print version
+      --type <TYPE>     Filter by record type, e.g. MX, or several like A,AAAA
+      --origin <NAME>   Origin to start from, until the file sets its own $ORIGIN
+      --json            Print matches as a JSON array
+      --data <NAME|IP>  Only match records pointing at this name or IP address
+  -h, --help            Print help (see more with '--help')
+  -V, --version         Print version
 ```
 
 The query is an owner name. `www` and `www.example.com.` both match that exact name. Start it with a dot (`.example.com`) to match the name and everything below it, and `.` on its own matches every record. Names without a trailing dot work relative to the zone's origin (its SOA owner, or the first `$ORIGIN` when there's no SOA) or as written, whichever matches.
@@ -34,6 +35,8 @@ The query is an owner name. `www` and `www.example.com.` both match that exact n
 Matches print one per line in zone file format, with absolute names and the TTL and class filled in, so the output is easy to `cut` or `awk`. Pass `--json` if you'd rather hand it to `jq`.
 
 Like `grep`, it exits 0 when something matched, 1 when nothing did, and 2 on errors.
+
+`--data` looks at the other end of the record, for when you want to know what points at a host before you move it. Give it an IP address and it finds the A and AAAA records holding that address, however it's written (`2001:db8::1` finds `2001:0db8:0:0::1`). Give it a name, written like the query, and it finds records with that name as a target: NS, CNAME, MX, SRV, SOA and friends. Only fields that hold names count, so `--data 10` won't match an MX preference and a hostname inside a TXT string won't match either. Pair it with `.` as the query to search the whole zone.
 
 ## Examples
 
@@ -59,6 +62,13 @@ aaaa:bbbb::5
 
 $ zoneq --origin 0.0.127.in-addr.arpa 1 tests/samples/localhost-reverse.zone
 1.0.0.127.in-addr.arpa.	1814400	IN	PTR	localhost.
+
+$ zoneq --data services . example.zone
+ftp.example.com.	86400	IN	CNAME	services.example.com.
+www.example.com.	86400	IN	CNAME	services.example.com.
+
+$ zoneq --data 10.0.1.5 . example.zone
+mail.example.com.	86400	IN	A	10.0.1.5
 
 $ cat example.zone | zoneq --type ns . -
 ```
