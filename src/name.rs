@@ -81,6 +81,39 @@ impl Name {
             && (split == 0 || ends_with_unescaped_dot(&self.0[..split]))
     }
 
+    /// The name with its leftmost label removed, or `None` for the root.
+    pub fn parent(&self) -> Option<Name> {
+        if self.is_root() {
+            return None;
+        }
+        let bytes = self.0.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'\\' => i += 2,
+                b'.' => {
+                    let rest = &self.0[i + 1..];
+                    return Some(if rest.is_empty() {
+                        Name::root()
+                    } else {
+                        Name(rest.to_string())
+                    });
+                }
+                _ => i += 1,
+            }
+        }
+        None
+    }
+
+    /// The wildcard directly below this name, `*.<name>`.
+    pub fn wildcard(&self) -> Name {
+        if self.is_root() {
+            Name("*.".to_string())
+        } else {
+            Name(format!("*.{}", self.0))
+        }
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -227,5 +260,27 @@ mod tests {
         assert!(!name(r"a\.example.com.").is_at_or_below(&zone));
         assert!(name(r"a\\.example.com.").is_at_or_below(&zone));
         assert!(!name("example.com.").is_at_or_below(&name("a.example.com.")));
+    }
+
+    #[test]
+    fn parents() {
+        assert_eq!(
+            name("www.example.com.").parent(),
+            Some(name("example.com."))
+        );
+        assert_eq!(name("com.").parent(), Some(Name::root()));
+        assert_eq!(Name::root().parent(), None);
+        assert_eq!(name(r"a\.b.example.").parent(), Some(name("example.")));
+        assert_eq!(name(r"a\\.b.").parent(), Some(name("b.")));
+    }
+
+    #[test]
+    fn wildcards() {
+        assert_eq!(name("example.com.").wildcard().as_str(), "*.example.com.");
+        assert_eq!(Name::root().wildcard().as_str(), "*.");
+        assert_eq!(
+            name("*.example.com.").wildcard().labels(),
+            ["*", "*", "example", "com"]
+        );
     }
 }

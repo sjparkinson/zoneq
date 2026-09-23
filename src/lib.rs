@@ -1,13 +1,16 @@
+pub mod data;
 pub mod error;
 mod lexer;
 pub mod name;
 pub mod query;
+pub mod resolve;
 mod ttl;
 pub mod zone;
 
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
+use data::DataQuery;
 pub use error::Error;
 use name::Name;
 use query::Query;
@@ -22,6 +25,11 @@ pub struct Options {
     /// Origin to start from, until the file sets its own `$ORIGIN`.
     pub origin: Option<Name>,
     pub json: bool,
+    /// A name or IP address to look for in the rdata.
+    pub data: Option<String>,
+    /// Answer like the zone's authoritative server would, instead of
+    /// matching owners.
+    pub resolve: bool,
 }
 
 impl Options {
@@ -45,13 +53,24 @@ pub fn run(opts: &Options, out: &mut impl Write) -> Result<usize, Error> {
         zone::parse_file(&opts.file, origin)?
     };
 
-    let query = Query::parse(&opts.query, zone.origin.as_ref())?;
-    let matches: Vec<&Record> = zone
-        .records
-        .iter()
-        .filter(|r| query.matches(&r.name))
-        .filter(|r| opts.wants_type(&r.rtype))
-        .collect();
+    let resolved;
+    let matches: Vec<&Record> = if opts.resolve {
+        resolved = resolve::run(&zone, &opts.query, &opts.record_types)?;
+        resolved.records.iter().collect()
+    } else {
+        let query = Query::parse(&opts.query, zone.origin.as_ref())?;
+        let data = opts
+            .data
+            .as_deref()
+            .map(|d| DataQuery::parse(d, zone.origin.as_ref()))
+            .transpose()?;
+        zone.records
+            .iter()
+            .filter(|r| data.as_ref().is_none_or(|d| d.matches(r)))
+            .filter(|r| query.matches(&r.name))
+            .filter(|r| opts.wants_type(&r.rtype))
+            .collect()
+    };
 
     let written = if opts.json {
         serde_json::to_writer_pretty(&mut *out, &matches)
@@ -81,6 +100,8 @@ mod tests {
             record_types: types.iter().map(|t| t.to_string()).collect(),
             origin: None,
             json: false,
+            data: None,
+            resolve: false,
         }
     }
 

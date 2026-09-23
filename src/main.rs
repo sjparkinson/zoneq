@@ -16,6 +16,11 @@ static ALLOC: dhat::Alloc = dhat::Alloc;
 /// dot to match that name and everything below it, or pass `.` to match
 /// every record.
 ///
+/// With --resolve, QUERY is a single name inside the zone, and the answer is
+/// what the zone's authoritative server would give for it: CNAMEs followed,
+/// wildcards expanded and delegations referred. --type then works like the
+/// query type, and without it you get every type, like ANY.
+///
 /// Exits 0 when something matched, 1 when nothing did, 2 on error.
 #[derive(Parser)]
 #[command(version = env!("ZONEQ_VERSION"))]
@@ -31,6 +36,14 @@ struct Cli {
     /// Print matches as a JSON array
     #[arg(long)]
     json: bool,
+
+    /// Only match records pointing at this name or IP address
+    #[arg(long, value_name = "NAME|IP")]
+    data: Option<String>,
+
+    /// Answer like the zone's server would, following CNAMEs and wildcards
+    #[arg(long, conflicts_with = "data")]
+    resolve: bool,
 
     /// Owner name to match: `www`, `.example.com` or `.`
     query: String,
@@ -62,6 +75,8 @@ fn main() -> ExitCode {
         record_types: cli.record_types,
         origin: cli.origin,
         json: cli.json,
+        data: cli.data,
+        resolve: cli.resolve,
     };
 
     let mut out = BufWriter::new(io::stdout().lock());
