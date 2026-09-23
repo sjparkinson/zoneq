@@ -64,7 +64,7 @@ fn bench_run(c: &mut Criterion) {
         let opts = Options {
             query: ".".into(),
             file: file.clone(),
-            record_type: None,
+            record_types: Vec::new(),
             origin: None,
             json,
         };
