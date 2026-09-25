@@ -122,8 +122,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             fuzz/target
-          key: fuzz-${{ hashFiles('fuzz/Cargo.lock', 'Cargo.toml') }}
-          restore-keys: fuzz-
+          key: fuzz-${{ matrix.target }}-${{ hashFiles('fuzz/Cargo.lock', 'Cargo.toml') }}
+          restore-keys: fuzz-${{ matrix.target }}-
 
       - run: command -v cargo-fuzz || cargo install cargo-fuzz --locked
       - run: mkdir -p "fuzz/corpus/$TARGET"
