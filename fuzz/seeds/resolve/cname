@@ -1,0 +1,15 @@
+alias AAAA
+; Wildcards, an empty non-terminal and a delegation, for --resolve.
+$ORIGIN example.net.
+$TTL 3600
+@               SOA     ns1 hostmaster 2026092301 7200 3600 1209600 300
+@               NS      ns1
+ns1             A       192.0.2.1
+www             A       192.0.2.10
+                AAAA    2001:db8::10
+*.users         CNAME   www
+; staff.users has no records, but its child does, so it blocks the wildcard.
+ann.staff.users TXT     "ann"
+lab             NS      ns.lab
+lab             NS      ns.example.org.
+ns.lab          A       192.0.2.53

@@ -46,14 +46,29 @@ cargo run --profile profiling --features dhat-heap -- . target/bench-1m.zone > /
 
 ## Fuzzing
 
-The parser has a [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz) target, which needs nightly Rust. It checks the parser doesn't panic on any input, and that every zone it accepts prints back out as lines that parse to the same records. Seed it with the sample zones and the dictionary of zone file syntax:
+There are [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz) targets, which need nightly Rust:
+
+- `parse` checks the parser doesn't panic on any input, and that every zone it accepts prints back out as lines that parse to the same records.
+- `resolve` reads a question from the first line, `<qname> [TYPE,TYPE]`, and a zone from the rest, then checks the answer stays inside the zone and comes out the same when asked by its full name.
+- `query` reads a query and a `--data` value from the first two lines and a zone from the rest, and checks every owner finds itself and a subtree query finds everything the exact one does.
+- `name` reads two names and an origin, one per line, and checks parents, labels and `is_at_or_below` agree with each other, including when every octet is spelt as a `\DDD` escape.
+
+Seed `parse` with the sample zones and the dictionary of zone file syntax:
 
 ```sh
 cargo install cargo-fuzz
 cargo +nightly fuzz run parse fuzz/corpus/parse tests/samples -- -dict=fuzz/zone.dict
 ```
 
-Crashes land in `fuzz/artifacts/parse/`. Pass one in place of the corpus directories to replay it.
+The other targets want their question lines on top of a zone, so their seeds live in `fuzz/seeds/<target>`:
+
+```sh
+cargo +nightly fuzz run resolve fuzz/corpus/resolve fuzz/seeds/resolve -- -dict=fuzz/zone.dict
+```
+
+CI runs each target for a minute on every pull request.
+
+Crashes land in `fuzz/artifacts/<target>/`. Pass one in place of the corpus directories to replay it.
 
 ## Releases
 

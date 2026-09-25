@@ -49,7 +49,8 @@ pub fn parse_qname(raw: &str, apex: &Name) -> Result<Name, Error> {
     if raw.is_empty() {
         return Err(Error::Query("the query is empty".into()));
     }
-    if raw.starts_with('.') {
+    // In the root zone, `.` is the apex rather than everything.
+    if raw.starts_with('.') && !(raw == "." && apex == &Name::root()) {
         return Err(Error::Query(format!(
             "--resolve takes a single name, not a subtree like {raw}"
         )));
@@ -151,15 +152,15 @@ pub fn resolve(zone: &Zone, apex: &Name, qname: &Name, types: &[String]) -> Resp
 /// The zone's records by owner, and every name that exists.
 struct Index<'a> {
     apex: &'a Name,
-    owners: HashMap<String, Vec<&'a Record>>,
+    owners: HashMap<Vec<u8>, Vec<&'a Record>>,
     /// The owners plus the empty non-terminals between them and the apex,
     /// which exist even though they have no records.
-    nodes: HashSet<String>,
+    nodes: HashSet<Vec<u8>>,
 }
 
 impl<'a> Index<'a> {
     fn new(zone: &'a Zone, apex: &'a Name) -> Index<'a> {
-        let mut owners: HashMap<String, Vec<&Record>> = HashMap::new();
+        let mut owners: HashMap<Vec<u8>, Vec<&Record>> = HashMap::new();
         let mut nodes = HashSet::from([key(apex)]);
         // Anything outside the apex isn't ours to answer for.
         for r in zone.records.iter().filter(|r| r.name.is_at_or_below(apex)) {
@@ -211,7 +212,7 @@ impl<'a> Index<'a> {
             .filter(|r| r.rtype.eq_ignore_ascii_case("NS"))
             .collect();
 
-        let mut targets: Vec<String> = Vec::new();
+        let mut targets: Vec<Vec<u8>> = Vec::new();
         for r in &ns {
             if let Some(Ok(target)) = r.rdata.first().map(|t| Name::parse(t, None))
                 && target.is_at_or_below(self.apex)
@@ -242,8 +243,8 @@ impl<'a> Index<'a> {
     }
 }
 
-fn key(name: &Name) -> String {
-    name.as_str().to_ascii_lowercase()
+fn key(name: &Name) -> Vec<u8> {
+    name.key()
 }
 
 #[cfg(test)]
@@ -492,6 +493,29 @@ into-sub    CNAME host.sub
         for bad in ["", ".", ".example.com", "www.example.org.", "a..b"] {
             assert!(matches!(parse(bad), Err(Error::Query(_))), "{bad}");
         }
+    }
+
+    #[test]
+    fn the_root_zone_answers_for_dot() {
+        let zone = parse_str(
+            ". 60 SOA a.root. host. 1 2 3 4 5\n. 60 NS a.root.\n",
+            Path::new("t"),
+            None,
+        )
+        .unwrap();
+        let response = run(&zone, ".", &["NS".to_string()]).unwrap();
+        assert_eq!(response.outcome, Outcome::Answer);
+        assert!(run(&zone, ".com", &[]).is_err());
+    }
+
+    #[test]
+    fn escapes_find_the_names_they_spell() {
+        let text = "$ORIGIN example.com.\n$TTL 60\n@ SOA ns1 host 1 2 3 4 5\n\\119ww A 192.0.2.1\na\\.b A 192.0.2.2\n";
+        let zone = parse_str(text, Path::new("t"), None).unwrap();
+        assert_eq!(run(&zone, "WWW", &[]).unwrap().outcome, Outcome::Answer);
+        assert_eq!(run(&zone, r"a\046b", &[]).unwrap().outcome, Outcome::Answer);
+        // The escaped dot isn't a label break, so there's no b to be below.
+        assert_eq!(run(&zone, "b", &[]).unwrap().outcome, Outcome::NxDomain);
     }
 
     #[test]
