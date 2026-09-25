@@ -20,6 +20,10 @@ impl Name {
                 .ok_or_else(|| "@ used with no origin set".to_string())?
         } else if raw == "." {
             Name::root()
+        } else if !trailing_backslashes(raw).is_multiple_of(2) {
+            // The dot added after it would be escaped, so the name would
+            // never end.
+            return Err(format!("invalid name {raw}: it ends in a lone backslash"));
         } else if ends_with_unescaped_dot(raw) {
             Name(raw.to_string())
         } else {
@@ -72,13 +76,26 @@ impl Name {
             return true;
         }
         let (ours, theirs) = (self.0.as_bytes(), ancestor.0.as_bytes());
+        // The match has to start a label: at the very beginning, or just
+        // after a dot that isn't escaped.
+        if let Some(split) = ours.len().checked_sub(theirs.len())
+            && ours[split..].eq_ignore_ascii_case(theirs)
+            && (split == 0 || ends_with_unescaped_dot(&self.0[..split]))
+        {
+            return true;
+        }
+        // Spelt differently, they can still be the same octets.
+        if !self.has_escapes() && !ancestor.has_escapes() {
+            return false;
+        }
+        let (ours, theirs) = (self.labels(), ancestor.labels());
         let Some(split) = ours.len().checked_sub(theirs.len()) else {
             return false;
         };
-        // The match has to start a label: at the very beginning, or just
-        // after a dot that isn't escaped.
-        ours[split..].eq_ignore_ascii_case(theirs)
-            && (split == 0 || ends_with_unescaped_dot(&self.0[..split]))
+        ours[split..]
+            .iter()
+            .zip(&theirs)
+            .all(|(a, b)| octets(a) == octets(b))
     }
 
     /// The name with its leftmost label removed, or `None` for the root.
@@ -155,6 +172,62 @@ impl Name {
     fn is_root(&self) -> bool {
         self.0 == "."
     }
+
+    /// The name lowercased, with escapes decoded except for a dot or
+    /// backslash inside a label. Two names are the same exactly when their
+    /// keys are, and a name with no escapes is its own key.
+    pub fn key(&self) -> Vec<u8> {
+        let mut key = self.0.to_ascii_lowercase().into_bytes();
+        if !key.contains(&b'\\') {
+            return key;
+        }
+        key.clear();
+        for label in self.labels() {
+            for byte in octets(label) {
+                if matches!(byte, b'.' | b'\\') {
+                    key.push(b'\\');
+                }
+                key.push(byte);
+            }
+            key.push(b'.');
+        }
+        key
+    }
+
+    fn has_escapes(&self) -> bool {
+        self.0.contains('\\')
+    }
+}
+
+/// A label's octets with its escapes decoded and ASCII lowercased, so
+/// `\087`, `\w` and `W` all come out as `w`.
+fn octets(label: &str) -> Vec<u8> {
+    let bytes = label.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let byte = match bytes[i..] {
+            [b'\\', a @ b'0'..=b'9', b @ b'0'..=b'9', c @ b'0'..=b'9', ..]
+                if let Ok(n) = u8::try_from(
+                    u16::from(a - b'0') * 100 + u16::from(b - b'0') * 10 + u16::from(c - b'0'),
+                ) =>
+            {
+                i += 4;
+                n
+            }
+            [b'\\', escaped, ..] => {
+                i += 2;
+                escaped
+            }
+            [byte, ..] => {
+                i += 1;
+                byte
+            }
+            [] => break,
+        };
+        out.push(byte.to_ascii_lowercase());
+    }
+    out
 }
 
 /// True when `raw` is an absolute name, ending in a dot that isn't escaped.
@@ -162,13 +235,19 @@ pub(crate) fn ends_with_unescaped_dot(raw: &str) -> bool {
     let Some(rest) = raw.strip_suffix('.') else {
         return false;
     };
-    let backslashes = rest.bytes().rev().take_while(|&b| b == b'\\').count();
-    backslashes % 2 == 0
+    trailing_backslashes(rest).is_multiple_of(2)
 }
 
+fn trailing_backslashes(raw: &str) -> usize {
+    raw.bytes().rev().take_while(|&b| b == b'\\').count()
+}
+
+/// Names are the same when their octets are, ignoring ASCII case, however
+/// they're escaped.
 impl PartialEq for Name {
     fn eq(&self, other: &Name) -> bool {
         self.0.eq_ignore_ascii_case(&other.0)
+            || (self.has_escapes() || other.has_escapes()) && self.key() == other.key()
     }
 }
 
@@ -245,8 +324,33 @@ mod tests {
     }
 
     #[test]
+    fn rejects_a_dangling_escape() {
+        assert!(Name::parse(r"a\", Some(&Name::root())).is_err());
+        assert!(Name::parse(r"a\\\", Some(&Name::root())).is_err());
+        assert_eq!(
+            Name::parse(r"a\\", Some(&Name::root())).unwrap().as_str(),
+            r"a\\."
+        );
+    }
+
+    #[test]
     fn equality_ignores_case() {
         assert_eq!(name("WWW.Example.COM."), name("www.example.com."));
+    }
+
+    #[test]
+    fn escapes_are_the_octets_they_stand_for() {
+        assert_eq!(name(r"\119ww.example."), name("WWW.example."));
+        assert_eq!(name(r"\w\W\087.example."), name("www.example."));
+        assert_eq!(name(r"m\046x.example."), name(r"m\.x.example."));
+        assert_ne!(name(r"m\046x.example."), name("m.x.example."));
+        assert!(name(r"a.\101xample.").is_at_or_below(&name("example.")));
+        assert!(!name(r"a\046example.").is_at_or_below(&name("example.")));
+        // Past 255 it's the digits themselves.
+        assert_eq!(name(r"\256.example."), name("256.example."));
+
+        assert_eq!(name(r"\119ww.example.").key(), b"www.example.");
+        assert_eq!(name(r"M\046\\x.").key(), br"m\.\\x.");
     }
 
     #[test]
