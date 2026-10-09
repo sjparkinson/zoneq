@@ -1,8 +1,102 @@
-use assert_cmd::Command;
-use predicates::prelude::*;
+use std::ffi::OsStr;
+use std::io::Write;
+use std::process::{Command, Stdio};
+use std::thread;
 
-fn zoneq() -> Command {
-    Command::cargo_bin("zoneq").unwrap()
+fn zoneq() -> Zoneq {
+    Zoneq {
+        cmd: Command::new(env!("CARGO_BIN_EXE_zoneq")),
+        stdin: String::new(),
+    }
+}
+
+struct Zoneq {
+    cmd: Command,
+    stdin: String,
+}
+
+impl Zoneq {
+    fn arg(mut self, arg: impl AsRef<OsStr>) -> Self {
+        self.cmd.arg(arg);
+        self
+    }
+
+    fn args(mut self, args: impl IntoIterator<Item = impl AsRef<OsStr>>) -> Self {
+        self.cmd.args(args);
+        self
+    }
+
+    fn write_stdin(mut self, input: impl Into<String>) -> Self {
+        self.stdin = input.into();
+        self
+    }
+
+    fn assert(mut self) -> Assert {
+        let mut child = self
+            .cmd
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut stdin = child.stdin.take().unwrap();
+        // On another thread, so a big input can't fill the pipe while zoneq
+        // waits for us to read its output. zoneq may exit without reading
+        // it all, so a write error is fine.
+        let writer = thread::spawn(move || {
+            let _ = stdin.write_all(self.stdin.as_bytes());
+        });
+        let out = child.wait_with_output().unwrap();
+        writer.join().unwrap();
+        Assert {
+            code: out.status.code(),
+            stdout: String::from_utf8(out.stdout).unwrap(),
+            stderr: String::from_utf8(out.stderr).unwrap(),
+        }
+    }
+}
+
+struct Assert {
+    code: Option<i32>,
+    stdout: String,
+    stderr: String,
+}
+
+impl Assert {
+    #[track_caller]
+    fn success(self) -> Self {
+        self.code(0)
+    }
+
+    #[track_caller]
+    fn code(self, code: i32) -> Self {
+        assert_eq!(self.code, Some(code), "stderr: {}", self.stderr);
+        self
+    }
+
+    #[track_caller]
+    fn stdout(self, expected: &str) -> Self {
+        assert_eq!(self.stdout, expected);
+        self
+    }
+
+    #[track_caller]
+    fn stderr(self, expected: &str) -> Self {
+        assert_eq!(self.stderr, expected);
+        self
+    }
+
+    #[track_caller]
+    fn stdout_matches(self, check: impl FnOnce(&str) -> bool) -> Self {
+        assert!(check(&self.stdout), "unexpected stdout: {:?}", self.stdout);
+        self
+    }
+
+    #[track_caller]
+    fn stderr_matches(self, check: impl FnOnce(&str) -> bool) -> Self {
+        assert!(check(&self.stderr), "unexpected stderr: {:?}", self.stderr);
+        self
+    }
 }
 
 #[test]
@@ -20,14 +114,14 @@ fn subtree_with_type_filter() {
         .args(["--type", "aaaa", ".example.com", "example.zone"])
         .assert()
         .success()
-        .stdout(predicate::function(|out: &str| {
+        .stdout_matches(|out| {
             out.lines().count() == 6 && out.lines().all(|l| l.contains("\tAAAA\t"))
-        }));
+        });
 }
 
 #[test]
 fn json_output() {
-    let output = zoneq()
+    zoneq()
         .args([
             "--json",
             "--type",
@@ -35,22 +129,42 @@ fn json_output() {
             "@",
             "tests/samples/example.com.zone",
         ])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-
-    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(json.as_array().unwrap().len(), 3);
-    assert_eq!(
-        json[2],
-        serde_json::json!({
-            "name": "example.com.",
-            "ttl": 3600,
-            "class": "IN",
-            "type": "MX",
-            "rdata": ["50", "mail3.example.com."],
-        })
-    );
+        .assert()
+        .success()
+        .stdout(concat!(
+            "[\n",
+            "  {\n",
+            "    \"name\": \"example.com.\",\n",
+            "    \"ttl\": 3600,\n",
+            "    \"class\": \"IN\",\n",
+            "    \"type\": \"MX\",\n",
+            "    \"rdata\": [\n",
+            "      \"10\",\n",
+            "      \"mail.example.com.\"\n",
+            "    ]\n",
+            "  },\n",
+            "  {\n",
+            "    \"name\": \"example.com.\",\n",
+            "    \"ttl\": 3600,\n",
+            "    \"class\": \"IN\",\n",
+            "    \"type\": \"MX\",\n",
+            "    \"rdata\": [\n",
+            "      \"20\",\n",
+            "      \"mail2.example.com.\"\n",
+            "    ]\n",
+            "  },\n",
+            "  {\n",
+            "    \"name\": \"example.com.\",\n",
+            "    \"ttl\": 3600,\n",
+            "    \"class\": \"IN\",\n",
+            "    \"type\": \"MX\",\n",
+            "    \"rdata\": [\n",
+            "      \"50\",\n",
+            "      \"mail3.example.com.\"\n",
+            "    ]\n",
+            "  }\n",
+            "]\n",
+        ));
 }
 
 #[test]
@@ -83,7 +197,7 @@ fn missing_file_exits_2() {
         .args([".", "nope.zone"])
         .assert()
         .code(2)
-        .stderr(predicate::str::starts_with("zoneq: nope.zone: "));
+        .stderr_matches(|out| out.starts_with("zoneq: nope.zone: "));
 }
 
 #[test]
@@ -126,7 +240,7 @@ fn bad_origin_blames_the_flag() {
         .args(["--origin", "a..b", "www", "example.zone"])
         .assert()
         .code(2)
-        .stderr(predicate::str::contains("'--origin <NAME>'"));
+        .stderr_matches(|out| out.contains("'--origin <NAME>'"));
 }
 
 #[test]
@@ -172,14 +286,14 @@ fn type_can_repeat() {
         .args(["--type", "mx,ns", "--type", "cname", ".", "example.zone"])
         .assert()
         .success()
-        .stdout(predicate::function(|out: &str| {
+        .stdout_matches(|out| {
             out.lines().count() == 6
                 && out.lines().all(|l| {
                     ["\tMX\t", "\tNS\t", "\tCNAME\t"]
                         .iter()
                         .any(|t| l.contains(t))
                 })
-        }));
+        });
 }
 
 #[test]
@@ -189,7 +303,7 @@ fn empty_type_exits_2() {
             .args(["--type", types, ".", "example.zone"])
             .assert()
             .code(2)
-            .stderr(predicate::str::contains("empty record type"));
+            .stderr_matches(|out| out.contains("empty record type"));
     }
 }
 
@@ -214,7 +328,7 @@ fn data_finds_what_points_at_a_name() {
         ])
         .assert()
         .success()
-        .stdout(predicate::function(|out: &str| out.lines().count() == 2));
+        .stdout_matches(|out| out.lines().count() == 2);
 }
 
 #[test]
@@ -321,7 +435,7 @@ fn resolve_needs_one_name_inside_the_zone() {
             .args(["--resolve", query, "tests/samples/resolve.zone"])
             .assert()
             .code(2)
-            .stderr(predicate::str::contains(message));
+            .stderr_matches(|out| out.contains(message));
     }
 }
 
@@ -331,5 +445,105 @@ fn resolve_and_data_conflict() {
         .args(["--resolve", "--data", "services", "www", "example.zone"])
         .assert()
         .code(2)
-        .stderr(predicate::str::contains("cannot be used with"));
+        .stderr_matches(|out| out.contains("can't be used with"));
+}
+
+#[test]
+fn help_and_version_exit_0() {
+    for flag in ["-h", "--help"] {
+        zoneq()
+            .arg(flag)
+            .assert()
+            .success()
+            .stdout_matches(|out| out.starts_with("Query zone files.\n"));
+    }
+    for flag in ["-V", "--version"] {
+        zoneq()
+            .arg(flag)
+            .assert()
+            .success()
+            .stdout_matches(|out| out.starts_with("zoneq 0.2."));
+    }
+}
+
+#[test]
+fn options_take_values_after_equals() {
+    zoneq()
+        .args(["--type=a,aaaa", "--data=10.0.1.5", "mail", "example.zone"])
+        .assert()
+        .success()
+        .stdout("mail.example.com.\t86400\tIN\tA\t10.0.1.5\n");
+}
+
+#[test]
+fn options_can_follow_positionals() {
+    zoneq()
+        .args(["mail", "example.zone", "--type", "a,aaaa"])
+        .assert()
+        .success()
+        .stdout(MAIL_A_AND_AAAA);
+}
+
+#[test]
+fn double_dash_ends_options() {
+    zoneq()
+        .args(["--", "--json", "example.zone"])
+        .assert()
+        .code(1)
+        .stdout("");
+}
+
+#[test]
+fn bad_arguments_exit_2() {
+    for (args, message) in [
+        (
+            &["--bogus", ".", "example.zone"][..],
+            "unexpected argument '--bogus'",
+        ),
+        (
+            &[".", "example.zone", "extra"],
+            "unexpected argument 'extra'",
+        ),
+        (&[], "<QUERY> and <FILE> are required"),
+        (&["."], "<FILE> is required"),
+        (
+            &[".", "example.zone", "--type"],
+            "'--type <TYPE>' needs a value",
+        ),
+        (
+            &["--json=yes", ".", "example.zone"],
+            "'--json' doesn't take a value",
+        ),
+        (
+            &["--data", "--resolve", "www", "example.zone"],
+            "'--data <NAME|IP>' needs a value",
+        ),
+        (
+            &["--json", ".", "--json", "example.zone"],
+            "'--json' can only be given once",
+        ),
+        (
+            &["--origin", "a.", "--origin", "b.", ".", "example.zone"],
+            "'--origin <NAME>' can only be given once",
+        ),
+    ] {
+        zoneq()
+            .args(args)
+            .assert()
+            .code(2)
+            .stdout("")
+            .stderr_matches(|out| out.starts_with(&format!("zoneq: {message}\n")));
+    }
+}
+
+#[test]
+fn readme_shows_the_help() {
+    let help = zoneq().arg("--help").assert().success().stdout;
+    // The title, usage, arguments and options, before the longer notes.
+    let summary = help.split("\n\n").take(4).collect::<Vec<_>>().join("\n\n");
+    let readme = std::fs::read_to_string("README.md").unwrap();
+    assert!(
+        readme.contains(&format!("```\n{summary}\n```")),
+        "README.md's usage block should match `zoneq --help`:\n{summary}"
+    );
 }

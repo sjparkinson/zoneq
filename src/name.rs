@@ -295,12 +295,6 @@ impl fmt::Display for Name {
     }
 }
 
-impl serde::Serialize for Name {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(&self.0)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

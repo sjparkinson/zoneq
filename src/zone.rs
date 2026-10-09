@@ -44,12 +44,11 @@ const TYPES: &[&str] = &[
     "CDNSKEY",
 ];
 
-#[derive(Clone, Debug, serde::Serialize)]
+#[derive(Clone, Debug)]
 pub struct Record {
     pub name: Name,
     pub ttl: u32,
     pub class: Cow<'static, str>,
-    #[serde(rename = "type")]
     pub rtype: Cow<'static, str>,
     pub rdata: Vec<String>,
 }

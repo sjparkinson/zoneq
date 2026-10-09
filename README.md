@@ -11,6 +11,8 @@ cargo install zoneq
 ## Usage
 
 ```
+Query zone files.
+
 Usage: zoneq [OPTIONS] <QUERY> <FILE>
 
 Arguments:
@@ -23,7 +25,7 @@ Options:
       --json            Print matches as a JSON array
       --data <NAME|IP>  Only match records pointing at this name or IP address
       --resolve         Answer like the zone's server would, following CNAMEs and wildcards
-  -h, --help            Print help (see more with '--help')
+  -h, --help            Print help
   -V, --version         Print version
 ```
 
