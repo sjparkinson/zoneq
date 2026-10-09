@@ -1,5 +1,6 @@
 pub mod data;
 pub mod error;
+mod json;
 mod lexer;
 pub mod name;
 pub mod query;
@@ -73,9 +74,7 @@ pub fn run(opts: &Options, out: &mut impl Write) -> Result<usize, Error> {
     };
 
     let written = if opts.json {
-        serde_json::to_writer_pretty(&mut *out, &matches)
-            .map_err(io::Error::from)
-            .and_then(|()| writeln!(out))
+        json::write_records(out, &matches)
     } else {
         matches.iter().try_for_each(|r| writeln!(out, "{r}"))
     };

@@ -14,11 +14,11 @@ The sample zones in `tests/samples` double as fixtures for the tests and the fuz
 
 ## Benchmarking and profiling
 
-`cargo bench` runs the Criterion benchmarks in `benches/parse.rs` on generated zones of up to 100k records. To compare a change against `main`, save a baseline there first:
+`cargo bench` runs the benchmarks in `benches/parse.rs` on generated zones of up to 100k records, printing the median time per call and the spread across samples. Pass a filter to run only the ones with it in their name. To compare a change against `main`, run the same filter on both and save the output:
 
 ```sh
-cargo bench -- --save-baseline main   # on main
-cargo bench -- --baseline main        # on your branch
+cargo bench -- parse_str > target/bench-main.txt   # on main
+cargo bench -- parse_str                           # on your branch
 ```
 
 For anything that needs a real file, generate one. A million records comes out at about 38 MB:
@@ -32,16 +32,17 @@ The `profiling` profile is `release` with symbols kept, which is what a CPU prof
 ```sh
 cargo build --profile profiling
 samply record target/profiling/zoneq . target/bench-1m.zone > /dev/null
-samply record cargo bench --bench parse -- --profile-time 10 parse_str/100000
+samply record cargo bench --bench parse -- parse_str/100000
 
 cargo build --release
 hyperfine --warmup 3 'target/release/zoneq . target/bench-1m.zone' 'target/release/zoneq --json . target/bench-1m.zone'
 ```
 
-To count heap allocations, build with the `dhat-heap` feature. It prints a summary and writes `dhat-heap.json` to the current directory, which you can open in [DHAT's viewer](https://nnethercote.github.io/dh_view/dh_view.html):
+To count heap allocations, point a heap profiler at the `profiling` build: [heaptrack](https://github.com/KDE/heaptrack) on Linux, or Instruments' Allocations template on macOS:
 
 ```sh
-cargo run --profile profiling --features dhat-heap -- . target/bench-1m.zone > /dev/null
+heaptrack target/profiling/zoneq . target/bench-1m.zone > /dev/null
+xcrun xctrace record --template Allocations --launch -- target/profiling/zoneq . target/bench-1m.zone
 ```
 
 ## Fuzzing
