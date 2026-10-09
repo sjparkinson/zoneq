@@ -5,10 +5,6 @@ use std::process::ExitCode;
 use zoneq::name::Name;
 use zoneq::{Error, Options};
 
-#[cfg(feature = "dhat-heap")]
-#[global_allocator]
-static ALLOC: dhat::Alloc = dhat::Alloc;
-
 macro_rules! usage {
     () => {
         "Usage: zoneq [OPTIONS] <QUERY> <FILE>"
@@ -171,10 +167,6 @@ fn once(seen: bool, shown: &str) -> Result<(), String> {
 }
 
 fn main() -> ExitCode {
-    // Writes dhat-heap.json when dropped at the end of main.
-    #[cfg(feature = "dhat-heap")]
-    let _profiler = dhat::Profiler::new_heap();
-
     let opts = match parse_args(std::env::args_os().skip(1)) {
         Ok(Command::Run(opts)) => opts,
         // `print!` would panic on a closed pipe, and there's nothing

@@ -8,16 +8,6 @@ repository = "https://github.com/sjparkinson/zoneq"
 readme = "README.md"
 license = "MIT"
 
-[dependencies]
-dhat = { version = "0.3", optional = true }
-
-[features]
-# Counts heap allocations into dhat-heap.json. For profiling only.
-dhat-heap = ["dep:dhat"]
-
-[dev-dependencies]
-criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
-
 [[bench]]
 name = "parse"
 harness = false
@@ -40,7 +30,7 @@ inherits = "release"
 debug = true
 strip = false
 
-# Keep symbols in benches too, so profiling a criterion run is readable.
+# Keep symbols in benches too, so profiling a bench run is readable.
 [profile.bench]
 debug = true
 strip = false
