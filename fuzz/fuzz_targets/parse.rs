@@ -10,7 +10,7 @@ fn lines(zone: &Zone) -> Vec<String> {
 }
 
 fuzz_target!(|data: &[u8]| {
-    // $INCLUDE reads from disk, and `$INCLUDE /dev/zero` never finishes.
+    // $INCLUDE reads from disk, which isn't what's being fuzzed.
     // Escapes are kept raw, so only these exact letters make the directive.
     if data.windows(8).any(|w| w.eq_ignore_ascii_case(b"$INCLUDE")) {
         return;

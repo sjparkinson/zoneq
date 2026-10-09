@@ -102,3 +102,5 @@ ns.lab.example.net.	3600	IN	A	192.0.2.53
 ## What it understands
 
 Everything in the [RFC 1035 § 5 master file format](https://tools.ietf.org/html/rfc1035#section-5) (`$ORIGIN`, `$INCLUDE`, parentheses, comments, quoting, escapes, inherited owners and classes), plus `$TTL` from [RFC 2308 § 4](https://tools.ietf.org/html/rfc2308#section-4) and BIND's TTL units like `1h30m`. `$GENERATE` isn't supported.
+
+Names longer than the 255 octets [RFC 1035 § 2.3.4](https://tools.ietf.org/html/rfc1035#section-2.3.4) allows, or with a label over 63, are errors. `$INCLUDE` only reads regular files, so a zone can't point it at `/dev/zero` or a pipe. Control characters in names and rdata print as `\DDD` escapes, which mean the same octets, so a zone file can't send escape sequences to your terminal.

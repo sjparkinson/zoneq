@@ -1,5 +1,16 @@
 use std::fmt;
 
+/// The most octets in a label, from RFC 1035 § 2.3.4.
+const MAX_LABEL: usize = 63;
+/// The most octets in a name on the wire, length bytes and root included.
+const MAX_NAME: usize = 255;
+
+enum Length {
+    EmptyLabel,
+    LongLabel,
+    LongName,
+}
+
 /// An absolute domain name, always with a trailing dot. Escapes such as
 /// `\.` are kept raw, and comparisons ignore ASCII case.
 #[derive(Clone, Debug)]
@@ -40,10 +51,13 @@ impl Name {
             }
         };
 
-        if name.has_empty_label() {
-            return Err(format!("invalid name {raw}"));
+        match name.check_lengths() {
+            Ok(()) => Ok(name),
+            Err(Length::EmptyLabel) => Err(format!("invalid name {raw}")),
+            // The name itself could be huge, so it's left out.
+            Err(Length::LongLabel) => Err(format!("a label is longer than {MAX_LABEL} octets")),
+            Err(Length::LongName) => Err(format!("a name is longer than {MAX_NAME} octets")),
         }
-        Ok(name)
     }
 
     /// The labels from left to right, not including the root.
@@ -139,34 +153,47 @@ impl Name {
         self.0
     }
 
-    /// Like checking `labels()` for an empty one, without building the list.
-    fn has_empty_label(&self) -> bool {
+    /// Checks every label has 1 to 63 octets and the whole name fits in
+    /// 255, as RFC 1035 § 2.3.4 asks, counting each escape as the one octet
+    /// it stands for. Beyond the spec, it keeps the work per name small:
+    /// resolving walks every ancestor of a name, which is quadratic in its
+    /// length.
+    fn check_lengths(&self) -> Result<(), Length> {
         if self.is_root() {
-            return false;
+            return Ok(());
         }
         let bytes = &self.0.as_bytes()[..self.0.len() - 1];
-        let mut len = 0;
+        // The root's zero-length label.
+        let mut total = 1;
+        let mut label = 0;
         let mut i = 0;
-        while i < bytes.len() {
-            match bytes[i] {
-                b'\\' => {
-                    i += 2;
-                    len += 2;
-                }
-                b'.' => {
-                    if len == 0 {
-                        return true;
+        while i <= bytes.len() {
+            match bytes.get(i) {
+                Some(b'.') | None => {
+                    if label == 0 {
+                        return Err(Length::EmptyLabel);
                     }
+                    if label > MAX_LABEL {
+                        return Err(Length::LongLabel);
+                    }
+                    total += 1 + label;
+                    if total > MAX_NAME {
+                        return Err(Length::LongName);
+                    }
+                    label = 0;
                     i += 1;
-                    len = 0;
+                    continue;
                 }
-                _ => {
-                    i += 1;
-                    len += 1;
+                // Mirrors `octets`: three digits up to 255 are one octet.
+                Some(b'\\') => {
+                    let step = if decimal_escape(&bytes[i..]) { 4 } else { 2 };
+                    i = (i + step).min(bytes.len());
                 }
+                Some(_) => i += 1,
             }
+            label += 1;
         }
-        len == 0
+        Ok(())
     }
 
     fn is_root(&self) -> bool {
@@ -228,6 +255,15 @@ fn octets(label: &str) -> Vec<u8> {
         out.push(byte.to_ascii_lowercase());
     }
     out
+}
+
+/// Whether `bytes` starts with a `\DDD` escape for one octet, 255 or less.
+fn decimal_escape(bytes: &[u8]) -> bool {
+    matches!(
+        bytes,
+        [b'\\', a @ b'0'..=b'9', b @ b'0'..=b'9', c @ b'0'..=b'9', ..]
+            if u16::from(a - b'0') * 100 + u16::from(b - b'0') * 10 + u16::from(c - b'0') <= 255
+    )
 }
 
 /// True when `raw` is an absolute name, ending in a dot that isn't escaped.
@@ -321,6 +357,35 @@ mod tests {
         assert!(Name::parse("a..b.", None).is_err());
         assert!(Name::parse("..", None).is_err());
         assert!(Name::parse(r"a\..b.", None).is_ok());
+    }
+
+    #[test]
+    fn rejects_names_over_the_length_limits() {
+        let label = "a".repeat(63);
+        assert!(Name::parse(&format!("{label}."), None).is_ok());
+        assert!(Name::parse(&format!("{label}a."), None).is_err());
+
+        // Three 63-octet labels and a 61-octet one, with their length bytes
+        // and the root's, make exactly 255.
+        let longest = format!("{label}.{label}.{label}.{}.", "a".repeat(61));
+        assert!(Name::parse(&longest, None).is_ok());
+        assert!(Name::parse(&format!("a{longest}"), None).is_err());
+        // A relative name can go over once the origin is added.
+        let origin = name(&longest[64..]);
+        assert!(Name::parse(&label, Some(&origin)).is_ok());
+        assert!(Name::parse(&format!("a.{label}"), Some(&origin)).is_err());
+
+        // Escapes count as the octets they stand for.
+        assert!(Name::parse(&format!("{}.", r"\097".repeat(63)), None).is_ok());
+        assert!(Name::parse(&format!("{}.", r"\.".repeat(63)), None).is_ok());
+        assert!(Name::parse(&format!("{}.", r"\.".repeat(64)), None).is_err());
+        // Past 255 it's the digits themselves, three octets.
+        assert!(Name::parse(&format!("{}.", r"\256".repeat(21)), None).is_ok());
+        assert!(Name::parse(&format!("{}.", r"\256".repeat(22)), None).is_err());
+
+        // A huge name fails without being echoed back.
+        let err = Name::parse(&"a.".repeat(100_000), None).unwrap_err();
+        assert_eq!(err, "a name is longer than 255 octets");
     }
 
     #[test]

@@ -62,19 +62,47 @@ impl fmt::Display for Record {
         if self.name.as_str().starts_with(['$', '\u{feff}']) {
             f.write_str("\\")?;
         }
-        write!(
-            f,
-            "{}\t{}\t{}\t{}\t",
-            self.name, self.ttl, self.class, self.rtype
-        )?;
+        write_escaped(f, self.name.as_str())?;
+        write!(f, "\t{}\t{}\t{}\t", self.ttl, self.class, self.rtype)?;
         for (i, field) in self.rdata.iter().enumerate() {
             if i > 0 {
                 f.write_str(" ")?;
             }
-            f.write_str(field)?;
+            write_escaped(f, field)?;
         }
         Ok(())
     }
+}
+
+/// Writes `text` with control characters spelt as `\DDD` escapes. A zone
+/// file can hold raw escape sequences and carriage returns, and printing
+/// them would let it drive the terminal or paint over other output. The
+/// escapes mean the same octets, so the text still reads back the same.
+pub(crate) fn write_escaped(f: &mut impl fmt::Write, text: &str) -> fmt::Result {
+    // Every control character starts with one of these bytes, and checking
+    // bytes is quicker than decoding characters for the usual case of none.
+    if !text.bytes().any(|b| b < 0x20 || b == 0x7f || b == 0xc2) {
+        return f.write_str(text);
+    }
+    // Whether the previous character was an unescaped backslash, so the
+    // control character is already escaped and only needs its digits.
+    let mut escaping = false;
+    for c in text.chars() {
+        if c.is_control() {
+            let mut buf = [0; 4];
+            for (i, byte) in c.encode_utf8(&mut buf).bytes().enumerate() {
+                if i > 0 || !escaping {
+                    f.write_char('\\')?;
+                }
+                write!(f, "{byte:03}")?;
+            }
+            escaping = false;
+        } else {
+            f.write_char(c)?;
+            escaping = c == '\\' && !escaping;
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -236,6 +264,16 @@ impl Parser {
 
                 let base = source.parent().unwrap_or(Path::new(""));
                 let path = base.join(file.text);
+                // Devices and pipes might never end, like `/dev/zero`, or
+                // never start. A top-level FILE can still be one, since
+                // whoever runs zoneq picked it.
+                let meta = fs::metadata(&path).map_err(|e| Error::io(&path, e))?;
+                if !meta.is_file() {
+                    return Err(fail(format!(
+                        "$INCLUDE {} isn't a regular file",
+                        path.display()
+                    )));
+                }
                 let input = read(&path)?;
                 self.parse(&input, &path, &mut child)?;
             }
@@ -470,6 +508,28 @@ mod tests {
         assert_eq!(printed, ["\\\u{feff}x.\t60\tIN\tA\t192.0.2.1"]);
         let reparsed = parse(&printed.join("\n")).unwrap();
         assert_eq!(lines(&reparsed), printed);
+    }
+
+    #[test]
+    fn control_characters_print_as_escapes() {
+        let zone = parse(concat!(
+            "$ORIGIN example.com.\n$TTL 60\n",
+            "a\x1bb TXT \"x\ry\x1b]0;hi\x07\" \"\ttab\"\n",
+            "c TXT \"\\\x1b \\\\\x1b \u{9b}\\\u{9b}\"\n",
+        ))
+        .unwrap();
+        let printed = lines(&zone);
+        assert_eq!(
+            printed,
+            [
+                "a\\027b.example.com.\t60\tIN\tTXT\t\"x\\013y\\027]0;hi\\007\" \"\\009tab\"",
+                "c.example.com.\t60\tIN\tTXT\t\"\\027 \\\\\\027 \\194\\155\\194\\155\"",
+            ]
+        );
+        // The same records come back, spelt with escapes.
+        let reparsed = parse(&printed.join("\n")).unwrap();
+        assert_eq!(lines(&reparsed), printed);
+        assert_eq!(reparsed.records[0].name, zone.records[0].name);
     }
 
     #[test]
@@ -725,6 +785,22 @@ mod tests {
             err.to_string().contains("nested more than 16 deep"),
             "{err}"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn include_only_reads_regular_files() {
+        let dir = scratch_dir("special");
+        fs::write(dir.join("parent.zone"), "$INCLUDE /dev/zero\n").unwrap();
+        let err = parse_file(&dir.join("parent.zone"), None).unwrap_err();
+        assert!(
+            err.to_string()
+                .ends_with("parent.zone:1: $INCLUDE /dev/zero isn't a regular file"),
+            "{err}"
+        );
+
+        fs::write(dir.join("dir.zone"), "$INCLUDE .\n").unwrap();
+        assert!(parse_file(&dir.join("dir.zone"), None).is_err());
     }
 
     #[test]
