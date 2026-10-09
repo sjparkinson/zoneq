@@ -48,9 +48,6 @@ example.com.	3600	IN	MX	10 mail.example.com.
 example.com.	3600	IN	MX	20 mail2.example.com.
 example.com.	3600	IN	MX	50 mail3.example.com.
 
-$ zoneq --type aaaa .example.com example.zone | wc -l
-6
-
 $ zoneq --type a,aaaa mail example.zone
 mail.example.com.	86400	IN	A	10.0.1.5
 mail.example.com.	86400	IN	AAAA	aaaa:bbbb::5
@@ -59,17 +56,29 @@ $ zoneq --json mail example.zone | jq -r '.[].rdata[0]'
 10.0.1.5
 aaaa:bbbb::5
 
-$ zoneq --origin 0.0.127.in-addr.arpa 1 tests/samples/localhost-reverse.zone
-1.0.0.127.in-addr.arpa.	1814400	IN	PTR	localhost.
-
 $ zoneq --data services . example.zone
 ftp.example.com.	86400	IN	CNAME	services.example.com.
 www.example.com.	86400	IN	CNAME	services.example.com.
 
-$ zoneq --data 10.0.1.5 . example.zone
-mail.example.com.	86400	IN	A	10.0.1.5
+$ zoneq --origin 0.0.127.in-addr.arpa 1 tests/samples/localhost-reverse.zone
+1.0.0.127.in-addr.arpa.	1814400	IN	PTR	localhost.
+```
 
-$ cat example.zone | zoneq --type ns . -
+For something bigger, IANA publishes the root zone as a zone file:
+
+```sh
+$ curl -sO https://www.internic.net/domain/root.zone
+
+$ zoneq --type ns --data .gtld-servers.net . root.zone | cut -f1 | sort -u
+com.
+net.
+
+$ zoneq --data 199.7.83.42 . root.zone
+l.ns.arpa.	172800	IN	A	199.7.83.42
+l.root-servers.net.	518400	IN	A	199.7.83.42
+
+$ curl -s https://www.internic.net/domain/root.zone | zoneq --type a k.root-servers.net -
+k.root-servers.net.	518400	IN	A	193.0.14.129
 ```
 
 ## Answering like a server
