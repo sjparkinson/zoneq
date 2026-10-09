@@ -64,9 +64,13 @@ jobs:
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: target
-          key: cargo-${{ matrix.target }}-${{ hashFiles('Cargo.lock', 'Cargo.toml') }}
-          restore-keys: cargo-${{ matrix.target }}-
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
 
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --locked --target "$TARGET" -- -D warnings
@@ -115,12 +119,12 @@ jobs:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
-            ~/.cargo/bin/cargo-fuzz
-            ~/.cargo/registry
-            ~/.cargo/git
-            fuzz/target
-          key: fuzz-${{ matrix.target }}-${{ hashFiles('fuzz/Cargo.lock', 'Cargo.toml') }}
-          restore-keys: fuzz-${{ matrix.target }}-
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            fuzz/target/
+          key: ${{ runner.os }}-cargo-fuzz-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
 
       - run: command -v cargo-fuzz || cargo install cargo-fuzz --locked
       - run: mkdir -p "fuzz/corpus/$TARGET"
