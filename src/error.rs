@@ -2,6 +2,8 @@ use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::zone::write_escaped;
+
 #[derive(Debug)]
 pub enum Error {
     Io {
@@ -35,18 +37,21 @@ impl Error {
     }
 }
 
+/// Messages quote the zone file, so control characters in it come out as
+/// escapes rather than reaching the terminal.
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Error::Io { path, source } => write!(f, "{}: {source}", path.display()),
+        let text = match self {
+            Error::Io { path, source } => format!("{}: {source}", path.display()),
             Error::Parse {
                 path,
                 line,
                 message,
-            } => write!(f, "{}:{line}: {message}", path.display()),
-            Error::Query(message) => write!(f, "bad query: {message}"),
-            Error::Output(source) => write!(f, "writing output: {source}"),
-        }
+            } => format!("{}:{line}: {message}", path.display()),
+            Error::Query(message) => format!("bad query: {message}"),
+            Error::Output(source) => format!("writing output: {source}"),
+        };
+        write_escaped(f, &text)
     }
 }
 
@@ -56,5 +61,16 @@ impl std::error::Error for Error {
             Error::Io { source, .. } => Some(source),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn messages_escape_control_characters() {
+        let err = Error::parse(Path::new("z"), 3, "found \x1b[2J");
+        assert_eq!(err.to_string(), r"z:3: found \027[2J");
     }
 }
