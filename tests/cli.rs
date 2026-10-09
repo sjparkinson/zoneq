@@ -541,7 +541,10 @@ fn readme_shows_the_help() {
     let help = zoneq().arg("--help").assert().success().stdout;
     // The title, usage, arguments and options, before the longer notes.
     let summary = help.split("\n\n").take(4).collect::<Vec<_>>().join("\n\n");
-    let readme = std::fs::read_to_string("README.md").unwrap();
+    // Windows checkouts can turn the README's line endings into CRLF.
+    let readme = std::fs::read_to_string("README.md")
+        .unwrap()
+        .replace("\r\n", "\n");
     assert!(
         readme.contains(&format!("```\n{summary}\n```")),
         "README.md's usage block should match `zoneq --help`:\n{summary}"
