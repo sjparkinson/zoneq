@@ -8,9 +8,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write
-  attestations: write
-  artifact-metadata: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -22,9 +19,31 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - run: echo "::add-matcher::.github/rust-matchers.json"
+
+      - name: Install Rust at rust-version from Cargo.toml
+        run: |
+          msrv=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)
+          rustup toolchain install "$msrv" --profile minimal --component rustfmt
+          rustup default "$msrv"
+
+      - run: cargo fmt --check
+
   test:
     name: ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     strategy:
       fail-fast: false
       matrix:
@@ -56,7 +75,7 @@ jobs:
       - name: Install Rust at rust-version from Cargo.toml
         run: |
           msrv=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)
-          rustup toolchain install "$msrv" --profile minimal --component rustfmt,clippy --target "$TARGET"
+          rustup toolchain install "$msrv" --profile minimal --component clippy --target "$TARGET"
           rustup default "$msrv"
 
       - if: contains(matrix.target, 'musl')
@@ -72,7 +91,6 @@ jobs:
             target/
           key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
 
-      - run: cargo fmt --check
       - run: cargo clippy --all-targets --locked --target "$TARGET" -- -D warnings
       - run: cargo test --locked --target "$TARGET" -- --color always
       - run: cargo build --release --locked --target "$TARGET"
@@ -85,7 +103,8 @@ jobs:
           path: ${{ env.DIST }}
           archive: false
 
-      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+      - if: github.event_name == 'push'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: ${{ env.DIST }}
 
@@ -126,6 +145,14 @@ jobs:
             fuzz/target/
           key: ${{ runner.os }}-cargo-fuzz-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
 
+      # Carry the corpus between runs, so each one starts from what the last
+      # found. Cache keys can't be overwritten, hence the run ID and prefix.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-${{ matrix.target }}-
+
       - run: command -v cargo-fuzz || cargo install cargo-fuzz --locked
       - run: mkdir -p "fuzz/corpus/$TARGET"
       - run: cargo +nightly fuzz run "$TARGET" "fuzz/corpus/$TARGET" "$SEEDS" -- -dict=fuzz/zone.dict -max_total_time=60
@@ -137,13 +164,15 @@ jobs:
           path: fuzz/artifacts
 
   publish:
-    needs: test
+    needs: [fmt, test]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: cargo
     permissions:
       contents: read
       id-token: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -157,9 +186,11 @@ jobs:
           rustup default "$msrv"
 
       - name: Stamp version
+        id: version
         run: |
           version="0.2.$(git rev-list --count HEAD)+$(git rev-parse --short HEAD)"
           sed -i "/^name = \"zoneq\"$/a version = \"$version\"" Cargo.toml
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
         id: auth
@@ -167,3 +198,26 @@ jobs:
       - run: cargo publish --allow-dirty
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+
+  release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.publish.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: zoneq-*
+          path: dist
+          merge-multiple: true
+
+      # Tag without the +sha build metadata, which crates.io ignores too.
+      - run: |
+          gh release create "v${VERSION%%+*}" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "$VERSION" \
+            --generate-notes
