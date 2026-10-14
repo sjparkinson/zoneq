@@ -33,7 +33,7 @@ The query is an owner name. `www` and `www.example.com.` both match that exact n
 
 `--type` narrows the matches to one or more record types, in any case. Give it a comma-separated list (`--type a,aaaa`), repeat the flag (`--type a --type aaaa`), or both.
 
-Matches print one per line in zone file format, with absolute names and the TTL and class filled in, so the output is easy to `cut` or `awk`. Pass `--json` if you'd rather hand it to `jq`.
+Matches print one per line in zone file format, with absolute names, the TTL and class filled in and SOA timers in seconds, so the output is easy to `cut` or `awk`. Pass `--json` if you'd rather hand it to `jq`.
 
 Like `grep`, it exits 0 when something matched, 1 when nothing did, and 2 on errors.
 
@@ -85,7 +85,7 @@ k.root-servers.net.	518400	IN	A	193.0.14.129
 
 ## Answering like a server
 
-`--resolve` stops matching owner names and answers the query the way the zone's authoritative server would, following [RFC 1034 § 4.3.2](https://tools.ietf.org/html/rfc1034#section-4.3.2) and the wildcard rules in [RFC 4592](https://tools.ietf.org/html/rfc4592). The query has to be a single name inside the zone, and `--type` becomes the question's type, with no `--type` meaning every type, like ANY.
+`--resolve` stops matching owner names and answers the query the way the zone's authoritative server would, following [RFC 1034 § 4.3.2](https://tools.ietf.org/html/rfc1034#section-4.3.2) and the wildcard rules in [RFC 4592](https://tools.ietf.org/html/rfc4592). The query has to be a single name inside the zone, and `--type` becomes the question's type, with no `--type` meaning every type, like ANY. A record written twice is answered once, as [RFC 2181 § 5](https://tools.ietf.org/html/rfc2181#section-5) asks.
 
 - CNAMEs are followed while they stay inside the zone, and the output is the chain in order, then the records at the end of it. A chain that loops, or runs past 16 CNAMEs, stops there.
 - Names with no records of their own but something below them (empty non-terminals) exist, so they answer with no data rather than not existing.
@@ -113,5 +113,7 @@ ns.lab.example.net.	3600	IN	A	192.0.2.53
 ## What it understands
 
 Everything in the [RFC 1035 § 5 master file format](https://tools.ietf.org/html/rfc1035#section-5) (`$ORIGIN`, `$INCLUDE`, parentheses, comments, quoting, escapes, inherited owners and classes), plus `$TTL` from [RFC 2308 § 4](https://tools.ietf.org/html/rfc2308#section-4) and BIND's TTL units like `1h30m`. `$GENERATE` isn't supported.
+
+Types and classes can be written the [RFC 3597](https://tools.ietf.org/html/rfc3597) way, so `TYPE1` is an A record, in the zone and in `--type`, and `CLASS1` is IN. Generic `\#` rdata for A, AAAA, MX, NS, CNAME, PTR and DNAME is rewritten in the usual form, so `A \# 4 c0000201` is found by `--data 192.0.2.1`. Other types keep their hex. A TTL from 2147483648 up to 4294967295 counts as 0, the way BIND reads it and [RFC 2181 § 8](https://tools.ietf.org/html/rfc2181#section-8) suggests, and anything bigger is an error.
 
 Names longer than the 255 octets [RFC 1035 § 2.3.4](https://tools.ietf.org/html/rfc1035#section-2.3.4) allows, or with a label over 63, are errors. `$INCLUDE` only reads regular files, so a zone can't point it at `/dev/zero` or a pipe. Control characters in names and rdata print as `\DDD` escapes, which mean the same octets, so a zone file can't send escape sequences to your terminal.

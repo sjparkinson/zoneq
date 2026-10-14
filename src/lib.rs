@@ -21,7 +21,8 @@ pub struct Options {
     pub query: String,
     /// `-` reads from stdin.
     pub file: PathBuf,
-    /// Record types to keep, uppercased. Empty keeps every type.
+    /// Record types to keep, uppercased, with `TYPE<n>` swapped for its
+    /// name. Empty keeps every type.
     pub record_types: Vec<String>,
     /// Origin to start from, until the file sets its own `$ORIGIN`.
     pub origin: Option<Name>,

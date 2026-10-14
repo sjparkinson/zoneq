@@ -36,7 +36,7 @@ fn reverse_zone_needs_an_origin() {
     assert_eq!(
         lines(&zone),
         [
-            "0.0.127.in-addr.arpa.\t1814400\tIN\tSOA\tlocalhost. root.localhost. 1999010100 3h 15m 1w 1d",
+            "0.0.127.in-addr.arpa.\t1814400\tIN\tSOA\tlocalhost. root.localhost. 1999010100 10800 900 604800 86400",
             "0.0.127.in-addr.arpa.\t1814400\tIN\tNS\tlocalhost.",
             "1.0.0.127.in-addr.arpa.\t1814400\tIN\tPTR\tlocalhost.",
         ]

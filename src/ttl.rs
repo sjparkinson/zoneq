@@ -1,20 +1,24 @@
 const MAX_TTL: u64 = 2_147_483_647;
 
 /// Parses a TTL as plain seconds (`86400`) or BIND units (`1h`, `3W`,
-/// `1h30m`). Returns `None` for anything else, including values over 2^31 - 1.
+/// `1h30m`). Returns `None` for anything else. Values from 2^31 up to
+/// 2^32 - 1 come out as 0, like BIND and RFC 2181 § 8 ask, so one silly TTL
+/// doesn't sink the whole zone.
 pub fn parse_ttl(raw: &str) -> Option<u32> {
+    parse_seconds(raw).map(|n| if u64::from(n) > MAX_TTL { 0 } else { n })
+}
+
+/// Parses a time in seconds or BIND units, up to 2^32 - 1, as SOA timers
+/// are written.
+pub fn parse_seconds(raw: &str) -> Option<u32> {
     if raw.is_empty() {
         return None;
     }
     if raw.bytes().all(|b| b.is_ascii_digit()) {
-        return raw
-            .parse::<u64>()
-            .ok()
-            .filter(|&n| n <= MAX_TTL)
-            .map(|n| n as u32);
+        return raw.parse().ok();
     }
 
-    let mut total: u64 = 0;
+    let mut total: u32 = 0;
     let mut digits = String::new();
     for c in raw.chars() {
         if c.is_ascii_digit() {
@@ -29,15 +33,15 @@ pub fn parse_ttl(raw: &str) -> Option<u32> {
             's' => 1,
             _ => return None,
         };
-        let n: u64 = digits.parse().ok()?;
+        let n: u32 = digits.parse().ok()?;
         total = total.checked_add(n.checked_mul(unit)?)?;
         digits.clear();
     }
     // Every number needs a unit once units are in play.
-    if !digits.is_empty() || total > MAX_TTL {
+    if !digits.is_empty() {
         return None;
     }
-    Some(total as u32)
+    Some(total)
 }
 
 #[cfg(test)]
@@ -64,10 +68,20 @@ mod tests {
     }
 
     #[test]
-    fn overflow() {
-        assert_eq!(parse_ttl("2147483648"), None);
+    fn past_2_31_is_zero() {
+        assert_eq!(parse_ttl("2147483648"), Some(0));
+        assert_eq!(parse_ttl("4294967295"), Some(0));
+        assert_eq!(parse_ttl("4000w"), Some(0));
+        assert_eq!(parse_seconds("4294967295"), Some(4294967295));
+        assert_eq!(parse_seconds("4000w"), Some(4000 * 604800));
+    }
+
+    #[test]
+    fn past_2_32_is_invalid() {
+        assert_eq!(parse_ttl("4294967296"), None);
         assert_eq!(parse_ttl("99999999999999999999"), None);
-        assert_eq!(parse_ttl("4000w"), None);
+        assert_eq!(parse_ttl("8000w"), None);
+        assert_eq!(parse_seconds("4294967296"), None);
     }
 
     #[test]

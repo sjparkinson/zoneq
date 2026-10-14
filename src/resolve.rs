@@ -1,8 +1,9 @@
 use std::collections::{HashMap, HashSet};
+use std::net::IpAddr;
 
 use crate::error::Error;
 use crate::name::{Name, ends_with_unescaped_dot};
-use crate::zone::{Record, Zone};
+use crate::zone::{Record, Zone, name_fields};
 
 /// The most CNAMEs to follow in one answer, the same as BIND.
 const MAX_CHAIN: usize = 16;
@@ -164,7 +165,13 @@ impl<'a> Index<'a> {
         let mut nodes = HashSet::from([key(apex)]);
         // Anything outside the apex isn't ours to answer for.
         for r in zone.records.iter().filter(|r| r.name.is_at_or_below(apex)) {
-            owners.entry(key(&r.name)).or_default().push(r);
+            let node = owners.entry(key(&r.name)).or_default();
+            // An RRset is a set, so a record written twice is answered once
+            // (RFC 2181 § 5), keeping the first one's TTL.
+            if node.iter().any(|seen| same_record(seen, r)) {
+                continue;
+            }
+            node.push(r);
             let mut name = r.name.clone();
             // Once a name is in, so is everything above it.
             while nodes.insert(key(&name)) {
@@ -247,6 +254,69 @@ fn key(name: &Name) -> Vec<u8> {
     name.key()
 }
 
+/// Whether two records at the same owner are the same record, however
+/// their rdata is spelt: names compared as names, addresses as addresses,
+/// and anything else by its octets once quotes and escapes are undone.
+fn same_record(a: &Record, b: &Record) -> bool {
+    a.rtype.eq_ignore_ascii_case(&b.rtype)
+        && a.rdata.len() == b.rdata.len()
+        && a.rdata.iter().zip(&b.rdata).enumerate().all(|(i, (x, y))| {
+            if x == y {
+                return true;
+            }
+            let rtype = &*a.rtype;
+            if name_fields(rtype).contains(&i)
+                && let (Ok(x), Ok(y)) = (Name::parse(x, None), Name::parse(y, None))
+            {
+                return x == y;
+            }
+            if matches!(rtype, "A" | "AAAA")
+                && let (Ok(x), Ok(y)) = (x.parse::<IpAddr>(), y.parse::<IpAddr>())
+            {
+                return x == y;
+            }
+            // RFC 3597 hex is the same in either case.
+            if a.rdata[0] == r"\#" && b.rdata[0] == r"\#" && i > 1 {
+                return x.eq_ignore_ascii_case(y);
+            }
+            unescape(x) == unescape(y)
+        })
+}
+
+/// A field's octets, without its quotes and with `\X` and `\DDD` escapes
+/// decoded.
+fn unescape(field: &str) -> Vec<u8> {
+    let field = field
+        .strip_prefix('"')
+        .and_then(|f| f.strip_suffix('"'))
+        .unwrap_or(field);
+    let bytes = field.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i..] {
+            [b'\\', a @ b'0'..=b'9', b @ b'0'..=b'9', c @ b'0'..=b'9', ..]
+                if let Ok(n) = u8::try_from(
+                    u16::from(a - b'0') * 100 + u16::from(b - b'0') * 10 + u16::from(c - b'0'),
+                ) =>
+            {
+                out.push(n);
+                i += 4;
+            }
+            [b'\\', escaped, ..] => {
+                out.push(escaped);
+                i += 2;
+            }
+            [byte, ..] => {
+                out.push(byte);
+                i += 1;
+            }
+            [] => break,
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -277,6 +347,66 @@ ns.sub      A     192.0.2.53
 ns.sub      AAAA  2001:db8::53
 into-sub    CNAME host.sub
 "#;
+
+    #[test]
+    fn records_written_twice_are_answered_once() {
+        let zone = parse_str(
+            r#"$ORIGIN example.com.
+$TTL 60
+@       SOA   ns hostmaster 1 2 3 4 5
+@       NS    ns
+@       NS    NS.Example.COM.
+ns      A     192.0.2.1
+txt     TXT   t
+txt     TXT   "t"
+txt     TXT   "\116"
+txt     TXT   T
+v6      AAAA  2001:db8::1
+v6      AAAA  2001:0db8:0::1
+sub     NS    ns.sub
+sub     NS    ns.sub.example.com.
+ns.sub  A     192.0.2.53
+ns.sub  120 A 192.0.2.53
+"#,
+            Path::new("test.zone"),
+            None,
+        )
+        .unwrap();
+        let apex = zone.origin.clone().unwrap();
+        let ask = |q: &str, t: &str| {
+            let qname = parse_qname(q, &apex).unwrap();
+            resolve(&zone, &apex, &qname, &[t.to_string()])
+                .records
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            ask("@", "NS"),
+            ["example.com.\t60\tIN\tNS\tns.example.com."]
+        );
+        // TXT is case-sensitive, so `T` is a record of its own.
+        assert_eq!(
+            ask("txt", "TXT"),
+            [
+                "txt.example.com.\t60\tIN\tTXT\tt",
+                "txt.example.com.\t60\tIN\tTXT\tT",
+            ]
+        );
+        assert_eq!(
+            ask("v6", "AAAA"),
+            ["v6.example.com.\t60\tIN\tAAAA\t2001:db8::1"]
+        );
+        // The referral and its glue too, keeping the first TTL.
+        assert_eq!(
+            ask("host.sub", "A"),
+            [
+                "sub.example.com.\t60\tIN\tNS\tns.sub.example.com.",
+                "ns.sub.example.com.\t60\tIN\tA\t192.0.2.53",
+            ]
+        );
+    }
 
     fn zone() -> Zone {
         parse_str(ZONE, Path::new("test.zone"), None).unwrap()

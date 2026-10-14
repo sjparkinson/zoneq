@@ -110,7 +110,11 @@ opaque A \# 4 0a000105
 
     #[test]
     fn addresses() {
-        assert_eq!(owners("10.0.1.5"), ["mail.example.com. A"]);
+        // The generic form of an A record is still an A record.
+        assert_eq!(
+            owners("10.0.1.5"),
+            ["mail.example.com. A", "opaque.example.com. A"]
+        );
         assert_eq!(owners("2001:0db8:0:0::5"), ["mail.example.com. AAAA"]);
         assert!(owners("10.0.1.9").is_empty());
     }
