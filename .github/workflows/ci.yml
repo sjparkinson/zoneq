@@ -19,23 +19,6 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  fmt:
-    runs-on: ubuntu-26.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - run: echo "::add-matcher::.github/rust-matchers.json"
-
-      - name: Install Rust at rust-version from Cargo.toml
-        run: |
-          msrv=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)
-          rustup toolchain install "$msrv" --profile minimal --component rustfmt
-          rustup default "$msrv"
-
-      - run: cargo fmt --check
-
   test:
     name: ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
@@ -75,7 +58,7 @@ jobs:
       - name: Install Rust at rust-version from Cargo.toml
         run: |
           msrv=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)
-          rustup toolchain install "$msrv" --profile minimal --component clippy --target "$TARGET"
+          rustup toolchain install "$msrv" --profile minimal --component rustfmt,clippy --target "$TARGET"
           rustup default "$msrv"
 
       - if: contains(matrix.target, 'musl')
@@ -91,6 +74,7 @@ jobs:
             target/
           key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
 
+      - run: cargo fmt --check
       - run: cargo clippy --all-targets --locked --target "$TARGET" -- -D warnings
       - run: cargo test --locked --target "$TARGET" -- --color always
       - run: cargo build --release --locked --target "$TARGET"
@@ -165,7 +149,7 @@ jobs:
 
   cargo-publish:
     name: cargo publish
-    needs: [fmt, test]
+    needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-26.04
     environment: cargo
@@ -198,7 +182,7 @@ jobs:
 
   gh-release:
     name: gh release
-    needs: [fmt, test]
+    needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-26.04
     permissions:
