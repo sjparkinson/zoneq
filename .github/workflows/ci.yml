@@ -147,7 +147,7 @@ jobs:
           name: fuzz-artifacts-${{ matrix.target }}
           path: fuzz/artifacts
 
-  cargo-publish:
+  cargo:
     name: cargo publish
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -180,7 +180,7 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
-  gh-release:
+  github:
     name: gh release
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
