@@ -499,13 +499,11 @@ fn parse_class(raw: &str) -> Option<Cow<'static, str>> {
     if let Some((_, name)) = CLASSES.iter().find(|(_, c)| c.eq_ignore_ascii_case(raw)) {
         return Some(Cow::Borrowed(name));
     }
-    let digits = generic_digits(raw, "CLASS")?;
-    Some(
-        match CLASSES.iter().find(|(n, _)| digits.parse() == Ok(*n)) {
-            Some((_, name)) => Cow::Borrowed(name),
-            None => Cow::Owned(raw.to_ascii_uppercase()),
-        },
-    )
+    let number: Option<u16> = generic_digits(raw, "CLASS")?.parse().ok();
+    Some(match CLASSES.iter().find(|(n, _)| Some(*n) == number) {
+        Some((_, name)) => Cow::Borrowed(name),
+        None => Cow::Owned(raw.to_ascii_uppercase()),
+    })
 }
 
 /// A record type in upper case, with RFC 3597's `TYPE<n>` swapped for the
@@ -523,7 +521,10 @@ pub fn type_name(raw: &str) -> Cow<'static, str> {
 /// Whether two record types are the same type, however they're written,
 /// so `a`, `A` and `TYPE1` all match.
 pub fn same_type(a: &str, b: &str) -> bool {
-    a.eq_ignore_ascii_case(b) || type_number(a).is_some_and(|n| type_number(b) == Some(n))
+    // No two names share a number, so only `TYPE<n>` needs looking up.
+    let generic = |t| generic_digits(t, "TYPE").is_some();
+    a.eq_ignore_ascii_case(b)
+        || ((generic(a) || generic(b)) && type_number(a).is_some_and(|n| type_number(b) == Some(n)))
 }
 
 /// A record type's number, from `TYPE<n>` or a name IANA lists.
@@ -652,7 +653,7 @@ pub(crate) fn name_fields(rtype: &str) -> &'static [usize] {
         "PX" => &[1, 2],
         "SRV" => &[3],
         "NAPTR" => &[5],
-        "RRSIG" => &[7],
+        "RRSIG" | "SIG" => &[7],
         _ => &[],
     }
 }
@@ -933,7 +934,7 @@ mod tests {
         // Every type `name_fields` knows.
         let names = [
             "NS", "CNAME", "PTR", "DNAME", "MB", "MG", "MR", "NSEC", "MX", "AFSDB", "RT", "KX",
-            "LP", "SVCB", "HTTPS", "SOA", "RP", "MINFO", "PX", "SRV", "NAPTR", "RRSIG",
+            "LP", "SVCB", "HTTPS", "SOA", "RP", "MINFO", "PX", "SRV", "NAPTR", "RRSIG", "SIG",
         ];
         for name in TYPES.iter().chain(&names) {
             assert!(

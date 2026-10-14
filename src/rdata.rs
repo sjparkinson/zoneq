@@ -41,7 +41,8 @@ fn shape(rtype: &str) -> Shape {
         }
         "SRV" => shape(&[0, 1, 2], &[], &[], None),
         "SOA" => shape(&[2, 3, 4, 5, 6], &[], &[], None),
-        "NAPTR" => shape(&[0, 1], &[], &[], None),
+        // NAPTR flags are caseless (RFC 3403 § 4.1).
+        "NAPTR" => shape(&[0, 1], &[2], &[], None),
         "CAA" => shape(&[0], &[1], &[], None),
         "DS" | "CDS" | "DLV" | "TA" | "TLSA" | "SMIMEA" | "ZONEMD" => {
             shape(&[0, 1, 2], &[], &[], Some((3, Tail::Hex)))
@@ -64,11 +65,15 @@ fn shape(rtype: &str) -> Shape {
 /// by its octets once quotes and escapes are undone.
 pub(crate) fn key(record: &Record) -> Vec<Vec<u8>> {
     let (rtype, rdata) = (&*record.rtype, &record.rdata);
-    // RFC 3597 hex, however it's split or cased.
+    // RFC 3597 hex, however it's split or cased, and its length, which the
+    // parser doesn't hold it to.
     if rdata.first().is_some_and(|f| f == r"\#") {
+        let len = rdata
+            .get(1)
+            .map_or(&[][..], |l| l.trim_start_matches('0').as_bytes());
         let mut hex = rdata.get(2..).unwrap_or_default().concat().into_bytes();
         hex.make_ascii_lowercase();
-        return vec![br"\#".to_vec(), hex];
+        return vec![br"\#".to_vec(), len.to_vec(), hex];
     }
 
     let shape = shape(rtype);
@@ -82,9 +87,10 @@ pub(crate) fn key(record: &Record) -> Vec<Vec<u8>> {
 
     if let Some((_, tail)) = shape.tail {
         let rest = &rdata[end..];
+        let joined = || rest.iter().map(|f| unquote(f)).collect::<String>();
         key.push(match tail {
-            Tail::Hex => rest.concat().to_ascii_lowercase().into_bytes(),
-            Tail::Base64 => rest.concat().into_bytes(),
+            Tail::Hex => joined().to_ascii_lowercase().into_bytes(),
+            Tail::Base64 => joined().into_bytes(),
             Tail::Types => {
                 let mut types: Vec<_> = rest.iter().map(|t| type_name(t)).collect();
                 types.sort();
@@ -106,10 +112,7 @@ fn field(rtype: &str, shape: &Shape, is_name: bool, i: usize, f: &str) -> Vec<u8
     {
         return addr.to_string().into_bytes();
     }
-    let raw = f
-        .strip_prefix('"')
-        .and_then(|f| f.strip_suffix('"'))
-        .unwrap_or(f);
+    let raw = unquote(f);
     if shape.numbers.contains(&i) && !raw.is_empty() && raw.bytes().all(|b| b.is_ascii_digit()) {
         let digits = raw.trim_start_matches('0');
         return if digits.is_empty() { "0" } else { digits }.into();
@@ -122,6 +125,13 @@ fn field(rtype: &str, shape: &Shape, is_name: bool, i: usize, f: &str) -> Vec<u8
         octets.make_ascii_lowercase();
     }
     octets
+}
+
+/// A field without its quotes, if it has them.
+fn unquote(f: &str) -> &str {
+    f.strip_prefix('"')
+        .and_then(|f| f.strip_suffix('"'))
+        .unwrap_or(f)
 }
 
 #[cfg(test)]
@@ -153,6 +163,15 @@ mod tests {
             (r"a TYPE731 \# 2 abcd", r"a TYPE731 \# 2 ( AB cd )"),
             ("a DS 1 8 2 ABCD", "a DS 1 8 2 ( ab cd )"),
             ("a CAA 0 issue \"ca\"", "a CAA 0 ISSUE \"ca\""),
+            (
+                "a NAPTR 1 1 \"S\" \"SIP+D2U\" \"\" b",
+                "a NAPTR 1 1 \"s\" \"SIP+D2U\" \"\" b",
+            ),
+            ("a DS 1 8 2 \"ABCD\"", "a DS 1 8 2 abcd"),
+            (
+                "a SIG A 8 2 60 20300101000000 20200101000000 1 X. c2ln",
+                "a SIG A 8 2 60 20300101000000 20200101000000 1 x. c2ln",
+            ),
             ("a NSEC b A RRSIG", "a NSEC b rrsig TYPE1"),
             (
                 "a RRSIG A 8 2 60 20300101000000 20200101000000 1 x. c2ln bmF0",
@@ -171,6 +190,8 @@ mod tests {
             ("a TXT 010", "a TXT 10"),
             ("a TXT \"a b\"", "a TXT a b"),
             ("a MX 10 mail", "a MX 20 mail"),
+            // A generic length that's wrong isn't the right one.
+            (r"a TYPE731 \# 2 abcd", r"a TYPE731 \# 3 abcd"),
             // Base64 is case-sensitive.
             ("a DNSKEY 256 3 8 AwEAAQ==", "a DNSKEY 256 3 8 aweaaq=="),
         ] {

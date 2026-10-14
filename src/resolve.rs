@@ -149,9 +149,9 @@ pub fn resolve(zone: &Zone, apex: &Name, qname: &Name, types: &[String]) -> Resp
     // An RRset is a set, so a record written twice is answered once (RFC
     // 2181 § 5), keeping the first one's TTL. Only the answer is checked,
     // since keying every record in the zone would cost every query.
-    let mut seen = HashSet::new();
+    let mut unique = HashSet::new();
     records.retain(|r| {
-        seen.insert((
+        unique.insert((
             key(&r.name),
             r.class.clone(),
             r.rtype.clone(),
