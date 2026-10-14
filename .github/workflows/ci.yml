@@ -207,4 +207,4 @@ jobs:
             --title "0.2.$count+$(git rev-parse --short HEAD)" \
             --generate-notes
         env:
-          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
