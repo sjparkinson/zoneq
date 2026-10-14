@@ -1,11 +1,15 @@
-const MAX_TTL: u64 = 2_147_483_647;
+const MAX_TTL: u32 = 2_147_483_647;
 
 /// Parses a TTL as plain seconds (`86400`) or BIND units (`1h`, `3W`,
-/// `1h30m`). Returns `None` for anything else. Values from 2^31 up to
-/// 2^32 - 1 come out as 0, like BIND and RFC 2181 § 8 ask, so one silly TTL
-/// doesn't sink the whole zone.
+/// `1h30m`). Returns `None` for anything else.
 pub fn parse_ttl(raw: &str) -> Option<u32> {
-    parse_seconds(raw).map(|n| if u64::from(n) > MAX_TTL { 0 } else { n })
+    parse_seconds(raw).map(as_ttl)
+}
+
+/// A time in seconds as a TTL. Values from 2^31 up come out as 0, like
+/// BIND and RFC 2181 § 8 ask, so one silly TTL doesn't sink the whole zone.
+pub fn as_ttl(seconds: u32) -> u32 {
+    if seconds > MAX_TTL { 0 } else { seconds }
 }
 
 /// Parses a time in seconds or BIND units, up to 2^32 - 1, as SOA timers

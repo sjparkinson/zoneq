@@ -4,6 +4,7 @@ mod json;
 mod lexer;
 pub mod name;
 pub mod query;
+mod rdata;
 pub mod resolve;
 mod ttl;
 pub mod zone;
@@ -21,8 +22,7 @@ pub struct Options {
     pub query: String,
     /// `-` reads from stdin.
     pub file: PathBuf,
-    /// Record types to keep, uppercased, with `TYPE<n>` swapped for its
-    /// name. Empty keeps every type.
+    /// Record types to keep, uppercased. Empty keeps every type.
     pub record_types: Vec<String>,
     /// Origin to start from, until the file sets its own `$ORIGIN`.
     pub origin: Option<Name>,
@@ -35,13 +35,10 @@ pub struct Options {
 }
 
 impl Options {
-    /// Whether `rtype` is one of the types asked for, ignoring case.
+    /// Whether `rtype` is one of the types asked for, however either is
+    /// written, so `TYPE1` asks for A.
     pub fn wants_type(&self, rtype: &str) -> bool {
-        self.record_types.is_empty()
-            || self
-                .record_types
-                .iter()
-                .any(|t| t.eq_ignore_ascii_case(rtype))
+        self.record_types.is_empty() || self.record_types.iter().any(|t| zone::same_type(t, rtype))
     }
 }
 
@@ -116,5 +113,7 @@ mod tests {
         assert!(o.wants_type("A"));
         assert!(o.wants_type("aaaa"));
         assert!(!o.wants_type("MX"));
+        assert!(opts(&["TYPE1"]).wants_type("A"));
+        assert!(opts(&["URI"]).wants_type("TYPE256"));
     }
 }

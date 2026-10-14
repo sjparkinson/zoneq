@@ -107,8 +107,7 @@ fn parse_args(args: impl Iterator<Item = OsString>) -> Result<Command, String> {
                             "invalid value '{raw}' for '{shown}': empty record type"
                         ));
                     }
-                    // So `TYPE1` asks for A, the same as it means in the zone.
-                    record_types.push(zoneq::zone::type_name(raw).into_owned());
+                    record_types.push(raw.to_ascii_uppercase());
                 }
             }
             "--origin" => {

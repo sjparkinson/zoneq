@@ -8,14 +8,12 @@ use std::path::Path;
 use crate::error::Error;
 use crate::lexer::{self, Line, Token};
 use crate::name::Name;
-use crate::ttl::{parse_seconds, parse_ttl};
+use crate::ttl::{as_ttl, parse_seconds, parse_ttl};
 
 const MAX_INCLUDE_DEPTH: usize = 16;
 
-const CLASSES: &[&str] = &["IN", "CH", "HS", "CS"];
-
-/// The classes RFC 3597's `CLASS<n>` can stand for.
-const CLASS_NUMBERS: &[(u16, &str)] = &[(1, "IN"), (2, "CS"), (3, "CH"), (4, "HS")];
+/// The classes by number, which is what RFC 3597's `CLASS<n>` spells.
+const CLASSES: &[(u16, &str)] = &[(1, "IN"), (3, "CH"), (4, "HS"), (2, "CS")];
 
 /// Types common enough to be worth not allocating, most common first.
 const TYPES: &[&str] = &[
@@ -48,16 +46,20 @@ const TYPES: &[&str] = &[
     "CDNSKEY",
 ];
 
-/// The types RFC 3597's `TYPE<n>` can stand for: everything in [`TYPES`],
-/// plus the rarer ones [`name_fields`] knows about.
+/// The data types in IANA's registry by number, which is what RFC 3597's
+/// `TYPE<n>` spells. Meta types like OPT and ANY can't be in a zone.
 const TYPE_NUMBERS: &[(u16, &str)] = &[
     (1, "A"),
     (2, "NS"),
+    (3, "MD"),
+    (4, "MF"),
     (5, "CNAME"),
     (6, "SOA"),
     (7, "MB"),
     (8, "MG"),
     (9, "MR"),
+    (10, "NULL"),
+    (11, "WKS"),
     (12, "PTR"),
     (13, "HINFO"),
     (14, "MINFO"),
@@ -65,29 +67,73 @@ const TYPE_NUMBERS: &[(u16, &str)] = &[
     (16, "TXT"),
     (17, "RP"),
     (18, "AFSDB"),
+    (19, "X25"),
+    (20, "ISDN"),
     (21, "RT"),
+    (22, "NSAP"),
+    (23, "NSAP-PTR"),
+    (24, "SIG"),
+    (25, "KEY"),
     (26, "PX"),
+    (27, "GPOS"),
     (28, "AAAA"),
     (29, "LOC"),
+    (30, "NXT"),
+    (31, "EID"),
+    (32, "NIMLOC"),
     (33, "SRV"),
+    (34, "ATMA"),
     (35, "NAPTR"),
     (36, "KX"),
+    (37, "CERT"),
+    (38, "A6"),
     (39, "DNAME"),
+    (40, "SINK"),
+    (42, "APL"),
     (43, "DS"),
     (44, "SSHFP"),
+    (45, "IPSECKEY"),
     (46, "RRSIG"),
     (47, "NSEC"),
     (48, "DNSKEY"),
+    (49, "DHCID"),
     (50, "NSEC3"),
     (51, "NSEC3PARAM"),
     (52, "TLSA"),
+    (53, "SMIMEA"),
+    (55, "HIP"),
+    (56, "NINFO"),
+    (57, "RKEY"),
+    (58, "TALINK"),
     (59, "CDS"),
     (60, "CDNSKEY"),
+    (61, "OPENPGPKEY"),
+    (62, "CSYNC"),
+    (63, "ZONEMD"),
     (64, "SVCB"),
     (65, "HTTPS"),
     (99, "SPF"),
+    (100, "UINFO"),
+    (101, "UID"),
+    (102, "GID"),
+    (103, "UNSPEC"),
+    (104, "NID"),
+    (105, "L32"),
+    (106, "L64"),
     (107, "LP"),
+    (108, "EUI48"),
+    (109, "EUI64"),
+    (256, "URI"),
     (257, "CAA"),
+    (258, "AVC"),
+    (259, "DOA"),
+    (260, "AMTRELAY"),
+    (261, "RESINFO"),
+    (262, "WALLET"),
+    (263, "CLA"),
+    (264, "IPN"),
+    (32768, "TA"),
+    (32769, "DLV"),
 ];
 
 #[derive(Clone, Debug)]
@@ -397,29 +443,40 @@ fn record(line: &Line, state: &mut State, records: &[Record]) -> Result<Record, 
         return Err(format!("{rtype} record has no data"));
     }
 
-    // RFC 3597 generic rdata (`\# <len> <hex>`) is opaque, so there are no
-    // names to qualify and no SOA fields to read.
-    let generic = fields[0].text == r"\#";
-
-    if rtype == "SOA" && !generic {
-        if fields.len() != 7 {
-            return Err(format!("SOA needs 7 fields, found {}", fields.len()));
-        }
-        let minimum = parse_ttl(fields[6].text)
-            .ok_or_else(|| format!("invalid SOA minimum {}", fields[6].text))?;
-        // Like BIND, with no TTL to go on, the SOA minimum becomes the
-        // default for this record and the ones after it.
-        if ttl.is_none() && state.default_ttl.is_none() && state.last_ttl.is_none() {
-            state.default_ttl = Some(minimum);
-        }
-    }
-
     if let Some(c) = &class {
         state.last_class = Some(c.clone());
     }
     let class = class
         .or_else(|| state.last_class.clone())
         .unwrap_or(Cow::Borrowed("IN"));
+
+    let rdata = if fields[0].text == r"\#" {
+        // RFC 3597 generic rdata is opaque unless it decodes to the type's
+        // usual form, so there are no names to qualify.
+        match from_generic(&rtype, &class, fields) {
+            Some(rdata) => rdata,
+            None => fields
+                .iter()
+                .map(|t| rdata_field(t, false, state))
+                .collect::<Result<_, _>>()?,
+        }
+    } else {
+        let name_fields = name_fields(&rtype);
+        let mut rdata = fields
+            .iter()
+            .enumerate()
+            .map(|(i, token)| rdata_field(token, name_fields.contains(&i), state))
+            .collect::<Result<Vec<_>, _>>()?;
+        if rtype == "SOA" {
+            let minimum = soa_timers(fields, &mut rdata)?;
+            // Like BIND, with no TTL to go on, the SOA minimum becomes the
+            // default for this record and the ones after it.
+            if ttl.is_none() && state.default_ttl.is_none() && state.last_ttl.is_none() {
+                state.default_ttl = Some(as_ttl(minimum));
+            }
+        }
+        rdata
+    };
 
     if ttl.is_some() {
         state.last_ttl = ttl;
@@ -428,22 +485,6 @@ fn record(line: &Line, state: &mut State, records: &[Record]) -> Result<Record, 
         .or(state.default_ttl)
         .or(state.last_ttl)
         .ok_or("no TTL given and no $TTL, previous TTL or SOA to fall back on")?;
-
-    let rdata = match generic.then(|| from_generic(&rtype, fields)).flatten() {
-        Some(rdata) => rdata,
-        None => {
-            let name_fields = if generic { &[] } else { name_fields(&rtype) };
-            let mut rdata = fields
-                .iter()
-                .enumerate()
-                .map(|(i, token)| rdata_field(token, name_fields.contains(&i), state))
-                .collect::<Result<Vec<_>, _>>()?;
-            if rtype == "SOA" && !generic {
-                soa_timers_in_seconds(&mut rdata)?;
-            }
-            rdata
-        }
-    };
 
     Ok(Record {
         name: owner,
@@ -455,12 +496,12 @@ fn record(line: &Line, state: &mut State, records: &[Record]) -> Result<Record, 
 }
 
 fn parse_class(raw: &str) -> Option<Cow<'static, str>> {
-    if CLASSES.iter().any(|c| c.eq_ignore_ascii_case(raw)) {
-        return Some(known_upper(raw, CLASSES));
+    if let Some((_, name)) = CLASSES.iter().find(|(_, c)| c.eq_ignore_ascii_case(raw)) {
+        return Some(Cow::Borrowed(name));
     }
-    let number = generic_number(raw, "CLASS")?;
+    let digits = generic_digits(raw, "CLASS")?;
     Some(
-        match CLASS_NUMBERS.iter().find(|(n, _)| Some(*n) == number) {
+        match CLASSES.iter().find(|(n, _)| digits.parse() == Ok(*n)) {
             Some((_, name)) => Cow::Borrowed(name),
             None => Cow::Owned(raw.to_ascii_uppercase()),
         },
@@ -470,42 +511,62 @@ fn parse_class(raw: &str) -> Option<Cow<'static, str>> {
 /// A record type in upper case, with RFC 3597's `TYPE<n>` swapped for the
 /// type's name when it has one, so `TYPE1` is `A`.
 pub fn type_name(raw: &str) -> Cow<'static, str> {
-    let number = generic_number(raw, "TYPE").flatten();
-    match TYPE_NUMBERS.iter().find(|(n, _)| Some(*n) == number) {
-        Some((_, name)) => known_upper(name, TYPES),
-        None => known_upper(raw, TYPES),
+    if let Some(t) = TYPES.iter().find(|t| t.eq_ignore_ascii_case(raw)) {
+        return Cow::Borrowed(t);
+    }
+    match type_number(raw).and_then(|n| TYPE_NUMBERS.iter().find(|(m, _)| *m == n)) {
+        Some((_, name)) => Cow::Borrowed(name),
+        None => Cow::Owned(raw.to_ascii_uppercase()),
     }
 }
 
-/// For `TYPE<n>` or `CLASS<n>`, `Some` with the number if it fits in 16
-/// bits, or `Some(None)` if it doesn't. `None` if `raw` isn't of that form.
-fn generic_number(raw: &str, prefix: &str) -> Option<Option<u16>> {
-    let digits = raw
-        .get(..prefix.len())
+/// Whether two record types are the same type, however they're written,
+/// so `a`, `A` and `TYPE1` all match.
+pub fn same_type(a: &str, b: &str) -> bool {
+    a.eq_ignore_ascii_case(b) || type_number(a).is_some_and(|n| type_number(b) == Some(n))
+}
+
+/// A record type's number, from `TYPE<n>` or a name IANA lists.
+fn type_number(raw: &str) -> Option<u16> {
+    match generic_digits(raw, "TYPE") {
+        Some(digits) => digits.parse().ok(),
+        None => TYPE_NUMBERS
+            .iter()
+            .find(|(_, name)| name.eq_ignore_ascii_case(raw))
+            .map(|(n, _)| *n),
+    }
+}
+
+/// The digits of RFC 3597's `TYPE<n>` or `CLASS<n>`, whatever their size.
+fn generic_digits<'a>(raw: &'a str, prefix: &str) -> Option<&'a str> {
+    raw.get(..prefix.len())
         .filter(|p| p.eq_ignore_ascii_case(prefix))
         .map(|_| &raw[prefix.len()..])
-        .filter(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()))?;
-    Some(digits.parse().ok())
+        .filter(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()))
 }
 
-/// Rewrites an SOA's refresh, retry, expire and minimum in seconds, so
-/// `1d` comes out as `86400`.
-fn soa_timers_in_seconds(rdata: &mut [String]) -> Result<(), String> {
-    for (field, what) in rdata[3..]
-        .iter_mut()
-        .zip(["refresh", "retry", "expire", "minimum"])
-    {
-        let seconds = parse_seconds(field).ok_or_else(|| format!("invalid SOA {what} {field}"))?;
-        *field = seconds.to_string();
+/// Checks an SOA has its 7 fields and returns its minimum. The refresh,
+/// retry, expire and minimum are rewritten in seconds, so `1d` comes out as
+/// `86400`, and any that don't read as a time are left as written.
+fn soa_timers(fields: &[Token], rdata: &mut [String]) -> Result<u32, String> {
+    if fields.len() != 7 {
+        return Err(format!("SOA needs 7 fields, found {}", fields.len()));
     }
-    Ok(())
+    let minimum = parse_seconds(fields[6].text)
+        .ok_or_else(|| format!("invalid SOA minimum {}", fields[6].text))?;
+    for (field, token) in rdata[3..].iter_mut().zip(&fields[3..]) {
+        if let Some(seconds) = parse_seconds(token.text).filter(|_| !token.quoted) {
+            *field = seconds.to_string();
+        }
+    }
+    Ok(minimum)
 }
 
 /// RFC 3597 generic rdata for a type that has a usual form, rewritten in
 /// that form, so `A \# 4 c0000201` is `A 192.0.2.1`. Only types whose
 /// form is easy to get right are rewritten, and anything that doesn't
-/// decode cleanly is left as it was.
-fn from_generic(rtype: &str, fields: &[Token]) -> Option<Vec<String>> {
+/// decode cleanly is left as it was. Addresses only mean addresses in IN.
+fn from_generic(rtype: &str, class: &str, fields: &[Token]) -> Option<Vec<String>> {
     let [_, len, hex @ ..] = fields else {
         return None;
     };
@@ -513,18 +574,23 @@ fn from_generic(rtype: &str, fields: &[Token]) -> Option<Vec<String>> {
         return None;
     }
     let hex: String = hex.iter().map(|t| t.text).collect();
+    if !hex.len().is_multiple_of(2) || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
     let bytes = (0..hex.len())
         .step_by(2)
-        .map(|i| u8::from_str_radix(hex.get(i..i + 2)?, 16).ok())
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).ok())
         .collect::<Option<Vec<u8>>>()?;
     if len.text.parse() != Ok(bytes.len()) {
         return None;
     }
-    let rdata = match (rtype, bytes.as_slice()) {
-        ("A", &[a, b, c, d]) => vec![Ipv4Addr::new(a, b, c, d).to_string()],
-        ("AAAA", bytes) => vec![Ipv6Addr::from(<[u8; 16]>::try_from(bytes).ok()?).to_string()],
-        ("NS" | "CNAME" | "PTR" | "DNAME", bytes) => vec![wire_name(bytes)?],
-        ("MX", [hi, lo, name @ ..]) => {
+    let rdata = match (rtype, class, bytes.as_slice()) {
+        ("A", "IN", &[a, b, c, d]) => vec![Ipv4Addr::new(a, b, c, d).to_string()],
+        ("AAAA", "IN", bytes) => {
+            vec![Ipv6Addr::from(<[u8; 16]>::try_from(bytes).ok()?).to_string()]
+        }
+        ("NS" | "CNAME" | "PTR" | "DNAME", _, bytes) => vec![wire_name(bytes)?],
+        ("MX", _, [hi, lo, name @ ..]) => {
             vec![u16::from_be_bytes([*hi, *lo]).to_string(), wire_name(name)?]
         }
         _ => return None,
@@ -533,7 +599,8 @@ fn from_generic(rtype: &str, fields: &[Token]) -> Option<Vec<String>> {
 }
 
 /// An uncompressed name in wire format, which must fill `bytes` exactly,
-/// spelt as an absolute name with escapes where the octets need them.
+/// spelt as an absolute name with escapes where the octets need them. Unlike
+/// [`write_escaped`], it escapes the octets that are special in a name too.
 fn wire_name(bytes: &[u8]) -> Option<String> {
     let mut name = String::new();
     let mut i = 0;
@@ -569,14 +636,6 @@ fn wire_name(bytes: &[u8]) -> Option<String> {
         name.push('.');
     }
     Name::parse(&name, None).ok().map(Name::into_string)
-}
-
-/// `raw` in upper case, borrowed from `table` when it's listed there.
-fn known_upper(raw: &str, table: &[&'static str]) -> Cow<'static, str> {
-    match table.iter().find(|t| t.eq_ignore_ascii_case(raw)) {
-        Some(t) => Cow::Borrowed(t),
-        None => Cow::Owned(raw.to_ascii_uppercase()),
-    }
 }
 
 fn is_type_like(raw: &str) -> bool {
@@ -785,6 +844,7 @@ mod tests {
              a CLASS1 TYPE1 192.0.2.1\n\
              c TYPE6 \\# 1 00\n\
              d TYPE70000 \\# 0\n\
+             e TYPE256 \\# 0\n\
              b CLASS3 type16 \"t\"\n",
         )
         .unwrap();
@@ -796,6 +856,7 @@ mod tests {
                 "c.x.\t60\tIN\tSOA\t\\# 1 00",
                 // Past 16 bits it's no type at all, so it's left alone.
                 "d.x.\t60\tIN\tTYPE70000\t\\# 0",
+                "e.x.\t60\tIN\tURI\t\\# 0",
                 "b.x.\t60\tCH\tTXT\t\"t\"",
             ]
         );
@@ -842,6 +903,7 @@ mod tests {
             ("A", "\\# 5 c000020100"),
             ("A", "\\# 4 c00002"),
             ("A", "\\# 4 c00002zz"),
+            ("A", "\\# 4 +c+0+0+2"),
             // A compression pointer, a name without its root, and octets
             // after the root.
             ("NS", "\\# 2 c00c"),
@@ -858,11 +920,58 @@ mod tests {
     }
 
     #[test]
-    fn soa_timers_print_in_seconds() {
-        let zone = parse("$ORIGIN x.\n@ 60 SOA ns host 2024010101 1d 2h 4w 1H30M\n").unwrap();
+    fn addresses_only_decode_in_in() {
+        let zone = parse("$ORIGIN x.\n$TTL 60\na CH A \\# 4 c0000201\nb CH NS \\# 1 00\n").unwrap();
         assert_eq!(
             lines(&zone),
-            ["x.\t60\tIN\tSOA\tns.x. host.x. 2024010101 86400 7200 2419200 5400"]
+            ["a.x.\t60\tCH\tA\t\\# 4 c0000201", "b.x.\t60\tCH\tNS\t."]
+        );
+    }
+
+    #[test]
+    fn every_type_has_a_number() {
+        // Every type `name_fields` knows.
+        let names = [
+            "NS", "CNAME", "PTR", "DNAME", "MB", "MG", "MR", "NSEC", "MX", "AFSDB", "RT", "KX",
+            "LP", "SVCB", "HTTPS", "SOA", "RP", "MINFO", "PX", "SRV", "NAPTR", "RRSIG",
+        ];
+        for name in TYPES.iter().chain(&names) {
+            assert!(
+                TYPE_NUMBERS.iter().any(|(_, t)| t == name),
+                "{name} has no number"
+            );
+        }
+        for name in names {
+            assert!(!name_fields(name).is_empty(), "{name} has no name fields");
+        }
+    }
+
+    #[test]
+    fn same_type_reads_numbers() {
+        assert!(same_type("a", "A"));
+        assert!(same_type("TYPE1", "a"));
+        assert!(same_type("type01", "TYPE1"));
+        assert!(same_type("URI", "TYPE256"));
+        assert!(same_type("TYPE70000", "type70000"));
+        assert!(!same_type("A", "AAAA"));
+        assert!(!same_type("TYPE1", "TYPE28"));
+    }
+
+    #[test]
+    fn soa_timers_print_in_seconds() {
+        let zone = parse(
+            "$ORIGIN x.\n\
+             @ 60 SOA ns host 2024010101 1d 2h 4w 1H30M\n\
+             @ 60 SOA ns host 1 \"2\" soon 4294967296 5\n",
+        )
+        .unwrap();
+        assert_eq!(
+            lines(&zone),
+            [
+                "x.\t60\tIN\tSOA\tns.x. host.x. 2024010101 86400 7200 2419200 5400",
+                // Timers that don't read as a time are left as written.
+                "x.\t60\tIN\tSOA\tns.x. host.x. 1 \"2\" soon 4294967296 5",
+            ]
         );
     }
 
@@ -967,11 +1076,6 @@ mod tests {
                 "$ORIGIN x.\n@ 60 SOA ns host 1 2 3\n",
                 2,
                 "SOA needs 7 fields",
-            ),
-            (
-                "$ORIGIN x.\n@ 60 SOA ns host 1 soon 3 4 5\n",
-                2,
-                "invalid SOA refresh soon",
             ),
             ("$TTL forever\n", 1, "invalid TTL"),
             (
