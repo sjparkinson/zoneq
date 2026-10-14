@@ -297,6 +297,15 @@ fn type_can_repeat() {
 }
 
 #[test]
+fn type_takes_generic_names() {
+    zoneq()
+        .args(["--type", "TYPE1", "mail", "example.zone"])
+        .assert()
+        .success()
+        .stdout("mail.example.com.\t86400\tIN\tA\t10.0.1.5\n");
+}
+
+#[test]
 fn empty_type_exits_2() {
     for types in ["a,,mx", "a,", ""] {
         zoneq()

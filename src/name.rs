@@ -229,7 +229,15 @@ impl Name {
 /// A label's octets with its escapes decoded and ASCII lowercased, so
 /// `\087`, `\w` and `W` all come out as `w`.
 fn octets(label: &str) -> Vec<u8> {
-    let bytes = label.as_bytes();
+    let mut out = unescape(label);
+    out.make_ascii_lowercase();
+    out
+}
+
+/// The octets `text` spells, with `\DDD` escapes up to 255 and `\X`
+/// escapes decoded. Past 255 the digits are themselves, as in a name.
+pub(crate) fn unescape(text: &str) -> Vec<u8> {
+    let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
@@ -252,7 +260,7 @@ fn octets(label: &str) -> Vec<u8> {
             }
             [] => break,
         };
-        out.push(byte.to_ascii_lowercase());
+        out.push(byte);
     }
     out
 }

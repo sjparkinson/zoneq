@@ -2,7 +2,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::error::Error;
 use crate::name::{Name, ends_with_unescaped_dot};
-use crate::zone::{Record, Zone};
+use crate::rdata;
+use crate::zone::{Record, Zone, same_type};
 
 /// The most CNAMEs to follow in one answer, the same as BIND.
 const MAX_CHAIN: usize = 16;
@@ -74,11 +75,10 @@ pub fn parse_qname(raw: &str, apex: &Name) -> Result<Name, Error> {
 
 pub fn resolve(zone: &Zone, apex: &Name, qname: &Name, types: &[String]) -> Response {
     let index = Index::new(zone, apex);
-    let wants =
-        |rtype: &str| types.is_empty() || types.iter().any(|t| t.eq_ignore_ascii_case(rtype));
+    let wants = |rtype: &str| types.is_empty() || types.iter().any(|t| same_type(t, rtype));
     // The DS records at a cut belong to the parent, so asking for them
     // there is answered rather than referred.
-    let ds_only = !types.is_empty() && types.iter().all(|t| t.eq_ignore_ascii_case("DS"));
+    let ds_only = !types.is_empty() && types.iter().all(|t| same_type(t, "DS"));
 
     let mut records = Vec::new();
     let mut seen: Vec<Name> = Vec::new();
@@ -145,6 +145,19 @@ pub fn resolve(zone: &Zone, apex: &Name, qname: &Name, types: &[String]) -> Resp
             }
         }
     };
+
+    // An RRset is a set, so a record written twice is answered once (RFC
+    // 2181 § 5), keeping the first one's TTL. Only the answer is checked,
+    // since keying every record in the zone would cost every query.
+    let mut unique = HashSet::new();
+    records.retain(|r| {
+        unique.insert((
+            key(&r.name),
+            r.class.clone(),
+            r.rtype.clone(),
+            rdata::key(r),
+        ))
+    });
 
     Response { records, outcome }
 }
@@ -278,13 +291,101 @@ ns.sub      AAAA  2001:db8::53
 into-sub    CNAME host.sub
 "#;
 
+    #[test]
+    fn records_written_twice_are_answered_once() {
+        let zone = parse_str(
+            r#"$ORIGIN example.com.
+$TTL 60
+@       SOA   ns hostmaster 1 2 3 4 5
+@       NS    ns
+@       NS    NS.Example.COM.
+ns      A     192.0.2.1
+txt     TXT   t
+txt     TXT   "t"
+txt     TXT   "\116"
+txt     TXT   T
+v6      AAAA  2001:db8::1
+v6      AAAA  2001:0db8:0::1
+mx      MX    10 mail
+mx      MX    010 MAIL
+ds      DS    1 8 2 ABCD
+ds      DS    1 8 2 ( ab cd )
+gen     TYPE731 \# 2 abcd
+gen     TYPE731 \# 2 ( AB cd )
+sub     NS    ns.sub
+sub     NS    ns.sub.example.com.
+ns.sub  A     192.0.2.53
+ns.sub  120 A 192.0.2.53
+ch      TXT   x
+ch CH   TXT   x
+"#,
+            Path::new("test.zone"),
+            None,
+        )
+        .unwrap();
+        let ask = |q: &str, t: &str| ask_in(&zone, q, &[t]).0;
+
+        assert_eq!(
+            ask("@", "NS"),
+            ["example.com.\t60\tIN\tNS\tns.example.com."]
+        );
+        // TXT is case-sensitive, so `T` is a record of its own.
+        assert_eq!(
+            ask("txt", "TXT"),
+            [
+                "txt.example.com.\t60\tIN\tTXT\tt",
+                "txt.example.com.\t60\tIN\tTXT\tT",
+            ]
+        );
+        assert_eq!(
+            ask("v6", "AAAA"),
+            ["v6.example.com.\t60\tIN\tAAAA\t2001:db8::1"]
+        );
+        assert_eq!(
+            ask("mx", "MX"),
+            ["mx.example.com.\t60\tIN\tMX\t10 mail.example.com."]
+        );
+        assert_eq!(ask("ds", "DS"), ["ds.example.com.\t60\tIN\tDS\t1 8 2 ABCD"]);
+        assert_eq!(
+            ask("gen", "TYPE731"),
+            ["gen.example.com.\t60\tIN\tTYPE731\t\\# 2 abcd"]
+        );
+        // The same data in another class is another record.
+        assert_eq!(
+            ask("ch", "TXT"),
+            [
+                "ch.example.com.\t60\tIN\tTXT\tx",
+                "ch.example.com.\t60\tCH\tTXT\tx",
+            ]
+        );
+        // The referral and its glue too, keeping the first TTL.
+        assert_eq!(
+            ask("host.sub", "A"),
+            [
+                "sub.example.com.\t60\tIN\tNS\tns.sub.example.com.",
+                "ns.sub.example.com.\t60\tIN\tA\t192.0.2.53",
+            ]
+        );
+    }
+
+    #[test]
+    fn types_can_be_asked_for_by_number() {
+        assert_eq!(ask("www", &["TYPE1"]), ask("www", &["A"]));
+        // TYPE43 is DS, so it's answered at the cut.
+        assert_eq!(ask("sub", &["TYPE43"]), ask("sub", &["DS"]));
+    }
+
     fn zone() -> Zone {
         parse_str(ZONE, Path::new("test.zone"), None).unwrap()
     }
 
     fn ask(qname: &str, types: &[&str]) -> (Vec<String>, Outcome) {
+        ask_in(&zone(), qname, types)
+    }
+
+    fn ask_in(zone: &Zone, qname: &str, types: &[&str]) -> (Vec<String>, Outcome) {
         let types: Vec<String> = types.iter().map(|t| t.to_string()).collect();
-        let response = run(&zone(), qname, &types).unwrap();
+        let response = run(zone, qname, &types).unwrap();
         let lines = response.records.iter().map(ToString::to_string).collect();
         (lines, response.outcome)
     }
