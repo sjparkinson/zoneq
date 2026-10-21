@@ -35,9 +35,9 @@ jobs:
             target: x86_64-unknown-linux-musl
           - os: ubuntu-26.04-arm
             target: aarch64-unknown-linux-musl
-          - os: macos-latest
+          - os: xcode-27
             target: aarch64-apple-darwin
-          - os: windows-latest
+          - os: windows-2025
             target: x86_64-pc-windows-msvc
             ext: .exe
     defaults:
