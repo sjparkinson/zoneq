@@ -11,6 +11,10 @@ use crate::name::Name;
 use crate::ttl::{as_ttl, parse_seconds, parse_ttl};
 
 const MAX_INCLUDE_DEPTH: usize = 16;
+/// Caps on every `$INCLUDE` in a parse put together. Depth alone doesn't
+/// stop a few small files that each include the next a thousand times.
+const MAX_INCLUDES: usize = 4096;
+const MAX_INCLUDE_BYTES: u64 = 256 * 1024 * 1024;
 
 /// The classes by number, which is what RFC 3597's `CLASS<n>` spells.
 const CLASSES: &[(u16, &str)] = &[(1, "IN"), (3, "CH"), (4, "HS"), (2, "CS")];
@@ -230,6 +234,8 @@ pub fn parse_str(input: &str, source: &Path, origin: Option<Name>) -> Result<Zon
     let mut parser = Parser {
         records: Vec::new(),
         origin: None,
+        includes: 0,
+        included_bytes: 0,
     };
     let mut state = State {
         origin: origin.clone(),
@@ -266,7 +272,7 @@ fn decode(bytes: Vec<u8>) -> String {
         for byte in chunk.invalid() {
             // After an unescaped backslash, the digits alone finish the escape.
             let backslashes = text.bytes().rev().take_while(|&b| b == b'\\').count();
-            if backslashes % 2 == 0 {
+            if backslashes.is_multiple_of(2) {
                 text.push('\\');
             }
             let _ = write!(text, "{byte:03}");
@@ -290,6 +296,8 @@ struct State {
 struct Parser {
     records: Vec<Record>,
     origin: Option<Name>,
+    includes: usize,
+    included_bytes: u64,
 }
 
 impl Parser {
@@ -363,6 +371,19 @@ impl Parser {
                     return Err(fail(format!(
                         "$INCLUDE {} isn't a regular file",
                         path.display()
+                    )));
+                }
+                self.includes += 1;
+                self.included_bytes += meta.len();
+                if self.includes > MAX_INCLUDES {
+                    return Err(fail(format!(
+                        "more than {MAX_INCLUDES} $INCLUDEs in one zone"
+                    )));
+                }
+                if self.included_bytes > MAX_INCLUDE_BYTES {
+                    return Err(fail(format!(
+                        "$INCLUDEs add up to more than {} MiB",
+                        MAX_INCLUDE_BYTES / 1024 / 1024
                     )));
                 }
                 let input = read(&path)?;

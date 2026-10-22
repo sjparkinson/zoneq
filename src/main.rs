@@ -58,6 +58,7 @@ fn parse_args(args: impl Iterator<Item = OsString>) -> Result<Command, String> {
     let mut json = false;
     let mut data = None;
     let mut resolve = false;
+    let mut any_type = false;
     let mut positionals = Vec::new();
 
     while let Some(arg) = args.next() {
@@ -107,7 +108,14 @@ fn parse_args(args: impl Iterator<Item = OsString>) -> Result<Command, String> {
                             "invalid value '{raw}' for '{shown}': empty record type"
                         ));
                     }
-                    record_types.push(raw.to_ascii_uppercase());
+                    let rtype = raw.to_ascii_uppercase();
+                    // ANY is a query type, not one a record can have, and
+                    // asking for it means every type.
+                    if rtype == "ANY" || rtype == "TYPE255" {
+                        any_type = true;
+                    } else {
+                        record_types.push(rtype);
+                    }
                 }
             }
             "--origin" => {
@@ -123,6 +131,10 @@ fn parse_args(args: impl Iterator<Item = OsString>) -> Result<Command, String> {
             }
             _ => return Err(format!("unexpected argument '{arg}'")),
         }
+    }
+
+    if any_type {
+        record_types.clear();
     }
 
     if resolve && data.is_some() {

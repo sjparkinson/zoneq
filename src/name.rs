@@ -25,7 +25,9 @@ impl Name {
     /// ending in an unescaped dot are absolute, and anything else is
     /// relative to `origin`.
     pub fn parse(raw: &str, origin: Option<&Name>) -> Result<Name, String> {
-        let name = if raw == "@" {
+        let name = if raw.is_empty() {
+            return Err("the name is empty".to_string());
+        } else if raw == "@" {
             origin
                 .cloned()
                 .ok_or_else(|| "@ used with no origin set".to_string())?

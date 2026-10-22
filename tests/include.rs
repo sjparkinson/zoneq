@@ -65,6 +65,20 @@ fn include_loops_are_caught() {
     );
 }
 
+#[test]
+fn include_fan_out_is_capped() {
+    // Shallow, with no loop, but 100 * 100 includes in all.
+    let dir = scratch_dir("fan-out");
+    fs::write(dir.join("c.zone"), "").unwrap();
+    fs::write(dir.join("b.zone"), "$INCLUDE c.zone\n".repeat(100)).unwrap();
+    fs::write(dir.join("a.zone"), "$INCLUDE b.zone\n".repeat(100)).unwrap();
+    let err = parse_file(&dir.join("a.zone"), None).unwrap_err();
+    assert!(
+        err.to_string().contains("more than 4096 $INCLUDEs"),
+        "{err}"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn include_only_reads_regular_files() {

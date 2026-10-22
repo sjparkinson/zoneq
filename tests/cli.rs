@@ -244,6 +244,40 @@ fn bad_origin_blames_the_flag() {
 }
 
 #[test]
+fn empty_origin_is_rejected() {
+    zoneq()
+        .args(["--origin=", "1", "tests/samples/localhost-reverse.zone"])
+        .assert()
+        .code(2)
+        .stderr_matches(|out| out.contains("invalid value '' for '--origin <NAME>'"));
+}
+
+#[test]
+fn type_any_means_every_type() {
+    let all = zoneq()
+        .args(["dns1", "example.zone"])
+        .assert()
+        .success()
+        .stdout;
+    for any in ["ANY", "any", "TYPE255", "a,any"] {
+        zoneq()
+            .args(["--type", any, "dns1", "example.zone"])
+            .assert()
+            .success()
+            .stdout(all.as_str());
+    }
+}
+
+#[test]
+fn resolve_type_any_returns_the_cname() {
+    zoneq()
+        .args(["--resolve", "--type", "any", "www", "example.zone"])
+        .assert()
+        .success()
+        .stdout("www.example.com.\t86400\tIN\tCNAME\tservices.example.com.\n");
+}
+
+#[test]
 fn relative_queries_use_the_soa_owner() {
     // BIND writes its zone files like this, starting from the root.
     zoneq()

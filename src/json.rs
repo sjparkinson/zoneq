@@ -35,35 +35,34 @@ fn comma(i: usize, len: usize) -> &'static str {
 }
 
 /// A JSON string literal, with quotes, backslashes and control characters
-/// escaped.
+/// escaped. JSON only needs the C0 controls escaped, but DEL and the C1
+/// controls are too, so `--json` can't drive a terminal any more than the
+/// text output can.
 struct Str<'a>(&'a str);
 
 impl fmt::Display for Str<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_char('"')?;
         let mut start = 0;
-        // Everything escaped is ASCII, and the bytes of a multi-byte
-        // character are all 0x80 or above, so slicing here stays on
-        // character boundaries.
-        for (i, b) in self.0.bytes().enumerate() {
-            let escape = match b {
-                b'"' => "\\\"",
-                b'\\' => "\\\\",
-                b'\n' => "\\n",
-                b'\r' => "\\r",
-                b'\t' => "\\t",
-                0x08 => "\\b",
-                0x0c => "\\f",
-                0x00..=0x1f => "",
+        for (i, c) in self.0.char_indices() {
+            let escape = match c {
+                '"' => "\\\"",
+                '\\' => "\\\\",
+                '\n' => "\\n",
+                '\r' => "\\r",
+                '\t' => "\\t",
+                '\u{8}' => "\\b",
+                '\u{c}' => "\\f",
+                c if c.is_control() => "",
                 _ => continue,
             };
             f.write_str(&self.0[start..i])?;
             if escape.is_empty() {
-                write!(f, "\\u{b:04x}")?;
+                write!(f, "\\u{:04x}", u32::from(c))?;
             } else {
                 f.write_str(escape)?;
             }
-            start = i + 1;
+            start = i + c.len_utf8();
         }
         f.write_str(&self.0[start..])?;
         f.write_char('"')
@@ -78,7 +77,11 @@ mod tests {
     #[test]
     fn strings_escape_what_json_needs() {
         assert_eq!(Str("").to_string(), r#""""#);
-        assert_eq!(Str("é😀\u{7f}").to_string(), "\"é😀\u{7f}\"");
+        assert_eq!(Str("é😀").to_string(), "\"é😀\"");
+        assert_eq!(
+            Str("\u{7f}\u{80}\u{9b}\u{a0}").to_string(),
+            "\"\\u007f\\u0080\\u009b\u{a0}\""
+        );
         assert_eq!(Str(r#"say "hi"\"#).to_string(), r#""say \"hi\"\\""#);
         assert_eq!(
             Str("\u{0}\u{8}\t\n\u{b}\u{c}\r\u{1f} ").to_string(),
