@@ -76,6 +76,9 @@ jobs:
 
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --locked --target "$TARGET" -- -D warnings
+      - run: cargo doc --no-deps --locked --target "$TARGET"
+        env:
+          RUSTDOCFLAGS: -D warnings
       - run: cargo test --locked --target "$TARGET" -- --color always
       - run: cargo build --release --locked --target "$TARGET"
 

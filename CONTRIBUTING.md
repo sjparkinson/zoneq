@@ -7,6 +7,7 @@ CI runs these on every pull request, so run them before you push:
 ```sh
 cargo fmt --check
 cargo clippy --all-targets --locked -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked
 cargo test --locked
 ```
 
