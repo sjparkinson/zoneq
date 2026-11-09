@@ -52,6 +52,8 @@ const TYPES: &[&str] = &[
 
 /// The data types in IANA's registry by number, which is what RFC 3597's
 /// `TYPE<n>` spells. Meta types like OPT and ANY can't be in a zone.
+/// Temporary registrations count, since a zone can hold them while they
+/// last, and `tests/iana.rs` holds the table to a copy of the registry.
 const TYPE_NUMBERS: &[(u16, &str)] = &[
     (1, "A"),
     (2, "NS"),
@@ -105,6 +107,7 @@ const TYPE_NUMBERS: &[(u16, &str)] = &[
     (51, "NSEC3PARAM"),
     (52, "TLSA"),
     (53, "SMIMEA"),
+    (54, "DELEGPARAM"),
     (55, "HIP"),
     (56, "NINFO"),
     (57, "RKEY"),
@@ -116,6 +119,11 @@ const TYPE_NUMBERS: &[(u16, &str)] = &[
     (63, "ZONEMD"),
     (64, "SVCB"),
     (65, "HTTPS"),
+    (66, "DSYNC"),
+    (67, "HHIT"),
+    (68, "BRID"),
+    (69, "UNECE"),
+    (70, "ISO"),
     (99, "SPF"),
     (100, "UINFO"),
     (101, "UID"),
@@ -138,6 +146,7 @@ const TYPE_NUMBERS: &[(u16, &str)] = &[
     (264, "IPN"),
     (32768, "TA"),
     (32769, "DLV"),
+    (61440, "DELEG"),
 ];
 
 #[derive(Clone, Debug)]
