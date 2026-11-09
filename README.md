@@ -109,7 +109,7 @@ k.root-servers.net.	518400	IN	A	193.0.14.129
 - Otherwise a wildcard directly below the closest existing name answers instead, with the owner rewritten to the query. Empty non-terminals count as existing here too, which is how they hide a wildcard above them.
 - A name at or below a delegation gets a referral: the NS records at the cut, then any A and AAAA glue in the zone for them. Asking for only DS at the cut gets the parent's DS records.
 
-When the name doesn't exist, or has nothing of that type, it prints nothing and exits 1. A CNAME chain that ends somewhere empty still prints the CNAMEs and exits 0, the same as a server putting them in the answer section. DNAME isn't followed.
+When the name doesn't exist, or has nothing of that type, it prints nothing and exits 1. A CNAME chain that ends somewhere empty still prints the CNAMEs and exits 0, the same as a server putting them in the answer section. To tell these apart, anything other than a plain answer also gets one line on stderr saying how it ended, starting `zoneq: NXDOMAIN:`, `zoneq: NODATA:`, `zoneq: REFERRAL:` or `zoneq: LOOP:`. Stdout and the exit code don't change. DNAME isn't followed.
 
 ```sh
 $ zoneq --resolve --type a www example.zone
@@ -125,6 +125,10 @@ $ zoneq --resolve host.lab tests/samples/resolve.zone
 lab.example.net.	3600	IN	NS	ns.lab.example.net.
 lab.example.net.	3600	IN	NS	ns.example.org.
 ns.lab.example.net.	3600	IN	A	192.0.2.53
+zoneq: REFERRAL: the lookup ends at a delegation, so its name servers are the ones to ask
+
+$ zoneq --resolve nope tests/samples/resolve.zone
+zoneq: NXDOMAIN: the lookup ends at a name that doesn't exist
 ```
 
 ## What it understands

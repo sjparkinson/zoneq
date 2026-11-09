@@ -42,9 +42,18 @@ impl Options {
     }
 }
 
+/// What [`run`] wrote.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Summary {
+    /// How many records were written.
+    pub matched: usize,
+    /// How the answer ended, when `resolve` asked for one.
+    pub outcome: Option<resolve::Outcome>,
+}
+
 /// Parses the zone, writes matching records to `out`, and returns how many
-/// there were.
-pub fn run(opts: &Options, out: &mut impl Write) -> Result<usize, Error> {
+/// there were, with how the answer ended if `opts.resolve` asked for one.
+pub fn run(opts: &Options, out: &mut impl Write) -> Result<Summary, Error> {
     let origin = opts.origin.clone();
     let zone = if opts.file == Path::new("-") {
         zone::parse_reader(io::stdin().lock(), Path::new("<stdin>"), origin)?
@@ -53,8 +62,10 @@ pub fn run(opts: &Options, out: &mut impl Write) -> Result<usize, Error> {
     };
 
     let resolved;
+    let mut outcome = None;
     let matches: Vec<&Record> = if opts.resolve {
         resolved = resolve::run(&zone, &opts.query, &opts.record_types)?;
+        outcome = Some(resolved.outcome);
         resolved.records.iter().collect()
     } else {
         let query = Query::parse(&opts.query, zone.origin.as_ref())?;
@@ -78,7 +89,10 @@ pub fn run(opts: &Options, out: &mut impl Write) -> Result<usize, Error> {
     };
     written.map_err(Error::Output)?;
 
-    Ok(matches.len())
+    Ok(Summary {
+        matched: matches.len(),
+        outcome,
+    })
 }
 
 /// Formats a record as a tab-separated zone file line.
