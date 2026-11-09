@@ -715,6 +715,8 @@ fn is_type_like(raw: &str) -> bool {
 pub(crate) fn name_fields(rtype: &str) -> &'static [usize] {
     match rtype {
         "NS" | "CNAME" | "PTR" | "DNAME" | "MB" | "MG" | "MR" | "NSEC" => &[0],
+        // Neither is in IANA's registry, but DNS providers export both.
+        "ALIAS" | "ANAME" => &[0],
         "MX" | "AFSDB" | "RT" | "KX" | "LP" | "SVCB" | "HTTPS" => &[1],
         "SOA" | "RP" | "MINFO" => &[0, 1],
         "PX" => &[1, 2],
@@ -902,6 +904,28 @@ mod tests {
     }
 
     #[test]
+    fn qualifies_alias_and_aname_targets() {
+        let zone = parse(concat!(
+            "$ORIGIN example.com.\n$TTL 60\n",
+            "@ ALIAS lb\n",
+            "@ alias lb.example.net.\n",
+            "shop ANAME @\n",
+            // In the generic form there's no name to find.
+            "old ANAME \\# 4 026c6200\n",
+        ))
+        .unwrap();
+        assert_eq!(
+            lines(&zone),
+            [
+                "example.com.\t60\tIN\tALIAS\tlb.example.com.",
+                "example.com.\t60\tIN\tALIAS\tlb.example.net.",
+                "shop.example.com.\t60\tIN\tANAME\texample.com.",
+                "old.example.com.\t60\tIN\tANAME\t\\# 4 026c6200",
+            ]
+        );
+    }
+
+    #[test]
     fn generic_types_pass_through() {
         let zone = parse("$ORIGIN x.\n$TTL 60\na CLASS731 TYPE731 \\# 2 abcd\n").unwrap();
         assert_eq!(lines(&zone), ["a.x.\t60\tCLASS731\tTYPE731\t\\# 2 abcd"]);
@@ -1000,7 +1024,8 @@ mod tests {
 
     #[test]
     fn every_type_has_a_number() {
-        // Every type `name_fields` knows.
+        // Every type `name_fields` knows that IANA does too, which leaves
+        // out ALIAS and ANAME.
         let names = [
             "NS", "CNAME", "PTR", "DNAME", "MB", "MG", "MR", "NSEC", "MX", "AFSDB", "RT", "KX",
             "LP", "SVCB", "HTTPS", "SOA", "RP", "MINFO", "PX", "SRV", "DSYNC", "NAPTR", "RRSIG",

@@ -68,6 +68,8 @@ ns A 10.0.1.1
 mail A 10.0.1.5
 mail AAAA 2001:db8::5
 www CNAME Mail
+@ ALIAS lb
+shop ANAME lb
 _sip._tcp SRV 0 5 5060 mail
 note TXT "mail.example.com."
 ten TXT 10
@@ -103,9 +105,17 @@ opaque A \# 4 0a000105
     }
 
     #[test]
+    fn alias_and_aname_targets() {
+        // Neither is a standard type, but they point at a host all the same.
+        let pointing_at_lb = ["example.com. ALIAS", "shop.example.com. ANAME"];
+        assert_eq!(owners("lb"), pointing_at_lb);
+        assert_eq!(owners("lb.example.com."), pointing_at_lb);
+    }
+
+    #[test]
     fn subtree() {
         assert_eq!(owners(".example.net"), ["example.com. MX"]);
-        assert_eq!(owners(".example.com").len(), 5);
+        assert_eq!(owners(".example.com").len(), 7);
     }
 
     #[test]
