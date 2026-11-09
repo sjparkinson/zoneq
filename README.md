@@ -8,6 +8,23 @@ Query zone files.
 cargo install zoneq
 ```
 
+Or skip the compiler. Every merge to `main` also publishes a [GitHub release](https://github.com/sjparkinson/zoneq/releases) with a binary for each of four targets:
+
+- `zoneq-aarch64-apple-darwin`
+- `zoneq-aarch64-unknown-linux-musl`
+- `zoneq-x86_64-unknown-linux-musl`
+- `zoneq-x86_64-pc-windows-msvc.exe`
+
+Each one has a build provenance attestation, so you can check it was built by this repository's CI before you run it. With the [GitHub CLI](https://cli.github.com), download the one you want from the latest release, verify it, and make it executable:
+
+```sh
+gh release download --repo sjparkinson/zoneq --pattern 'zoneq-aarch64-apple-darwin'
+gh attestation verify zoneq-aarch64-apple-darwin --repo sjparkinson/zoneq
+chmod +x zoneq-aarch64-apple-darwin
+```
+
+Then move it somewhere on your `PATH` as `zoneq`.
+
 ## Usage
 
 ```
