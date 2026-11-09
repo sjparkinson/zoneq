@@ -3,6 +3,7 @@ use std::io::{self, BufWriter, ErrorKind, Write};
 use std::process::ExitCode;
 
 use zoneq::name::Name;
+use zoneq::resolve::Outcome;
 use zoneq::{Error, Options};
 
 macro_rules! usage {
@@ -26,6 +27,7 @@ Options:
       --json            Print matches as a JSON array
       --data <NAME|IP>  Only match records pointing at this name or IP address
       --resolve         Answer like the zone's server would, following CNAMEs and wildcards
+      --no-include      Treat $INCLUDE as an error, for zones you didn't write
   -h, --help            Print help
   -V, --version         Print version
 
@@ -36,7 +38,9 @@ record.
 With --resolve, QUERY is a single name inside the zone, and the answer is
 what the zone's authoritative server would give for it: CNAMEs followed,
 wildcards expanded and delegations referred. --type then works like the
-query type, and without it you get every type, like ANY.
+query type, and without it you get every type, like ANY. Anything other
+than a plain answer also gets a line on stderr saying how it ended:
+NXDOMAIN, NODATA, REFERRAL or LOOP, then the reason.
 
 Exits 0 when something matched, 1 when nothing did, 2 on error.
 "
@@ -58,6 +62,7 @@ fn parse_args(args: impl Iterator<Item = OsString>) -> Result<Command, String> {
     let mut json = false;
     let mut data = None;
     let mut resolve = false;
+    let mut no_include = false;
     let mut any_type = false;
     let mut positionals = Vec::new();
 
@@ -87,7 +92,9 @@ fn parse_args(args: impl Iterator<Item = OsString>) -> Result<Command, String> {
         };
 
         match flag {
-            "-h" | "--help" | "-V" | "--version" | "--json" | "--resolve" if inline.is_some() => {
+            "-h" | "--help" | "-V" | "--version" | "--json" | "--resolve" | "--no-include"
+                if inline.is_some() =>
+            {
                 return Err(format!("'{flag}' doesn't take a value"));
             }
             "-h" | "--help" => return Ok(Command::Help),
@@ -99,6 +106,10 @@ fn parse_args(args: impl Iterator<Item = OsString>) -> Result<Command, String> {
             "--resolve" => {
                 once(resolve, flag)?;
                 resolve = true;
+            }
+            "--no-include" => {
+                once(no_include, flag)?;
+                no_include = true;
             }
             "--type" => {
                 let shown = "--type <TYPE>";
@@ -162,6 +173,7 @@ fn parse_args(args: impl Iterator<Item = OsString>) -> Result<Command, String> {
         json,
         data,
         resolve,
+        no_include,
     }))
 }
 
@@ -176,6 +188,26 @@ fn once(seen: bool, shown: &str) -> Result<(), String> {
         return Err(format!("'{shown}' can only be given once"));
     }
     Ok(())
+}
+
+/// What to say on stderr about how a `--resolve` answer ended, or nothing
+/// for a plain answer. The keyword is there to grep for. Every outcome can
+/// come at the end of a CNAME chain as well as at the name asked for, so
+/// the reasons talk about where the lookup ended.
+fn note(outcome: Outcome) -> Option<&'static str> {
+    match outcome {
+        Outcome::Answer => None,
+        Outcome::NxDomain => Some("NXDOMAIN: the lookup ends at a name that doesn't exist"),
+        // Not "of that type", since an empty non-terminal has no data for
+        // any type and can be asked without one.
+        Outcome::NoData => Some(
+            "NODATA: the lookup ends at a name that exists, but has none of the records asked for",
+        ),
+        Outcome::Referral => Some(
+            "REFERRAL: the lookup ends at a delegation, so its name servers are the ones to ask",
+        ),
+        Outcome::Loop => Some("LOOP: the CNAME chain loops, or runs past 16 CNAMEs"),
+    }
 }
 
 fn main() -> ExitCode {
@@ -204,14 +236,25 @@ fn main() -> ExitCode {
     let mut out = BufWriter::new(io::stdout().lock());
     // Piping into `head` and friends shouldn't look like a failure, so a
     // broken pipe on the final flush keeps the exit code the matches earned.
-    let result = zoneq::run(&opts, &mut out).and_then(|n| match out.flush() {
+    let result = zoneq::run(&opts, &mut out).and_then(|summary| match out.flush() {
         Err(e) if e.kind() != ErrorKind::BrokenPipe => Err(Error::Output(e)),
-        _ => Ok(n),
+        _ => Ok(summary),
     });
 
     match result {
-        Ok(0) => ExitCode::from(1),
-        Ok(_) => ExitCode::SUCCESS,
+        Ok(summary) => {
+            if let Some(note) = summary.outcome.and_then(note) {
+                // After the flush, so it reads as the last line in a
+                // terminal. `eprintln!` would panic on a closed pipe and
+                // take the exit code with it.
+                let _ = writeln!(io::stderr(), "zoneq: {note}");
+            }
+            if summary.matched == 0 {
+                ExitCode::from(1)
+            } else {
+                ExitCode::SUCCESS
+            }
+        }
         // Only writing matches fills the buffer, so something matched.
         Err(Error::Output(e)) if e.kind() == ErrorKind::BrokenPipe => ExitCode::SUCCESS,
         Err(e) => {

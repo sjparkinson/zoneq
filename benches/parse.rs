@@ -78,6 +78,7 @@ fn main() {
                     json,
                     data: None,
                     resolve: false,
+                    no_include: false,
                 };
                 bench(name, None, || run(&opts, &mut io::sink()).unwrap());
             }

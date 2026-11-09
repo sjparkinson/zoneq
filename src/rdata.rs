@@ -55,6 +55,9 @@ fn shape(rtype: &str) -> Shape {
         "NSEC3" => shape(&[0, 1, 2], &[3, 4], &[], Some((5, Tail::Types))),
         "NSEC3PARAM" => shape(&[0, 1, 2], &[3], &[], None),
         "CSYNC" => shape(&[0, 1], &[], &[], Some((2, Tail::Types))),
+        // A DSYNC scheme is a mnemonic when it has one and a number when it
+        // doesn't (RFC 9859 § 2.2).
+        "DSYNC" => shape(&[1, 2], &[1], &[0], None),
         _ => shape(&[], &[], &[], None),
     }
 }
@@ -112,7 +115,12 @@ fn field(rtype: &str, shape: &Shape, is_name: bool, i: usize, f: &str) -> Vec<u8
     {
         return addr.to_string().into_bytes();
     }
-    let raw = unquote(f);
+    let mut raw = unquote(f);
+    // NOTIFY is the one DSYNC scheme with a mnemonic so far, and it's
+    // scheme 1 (RFC 9859 § 6.2).
+    if rtype == "DSYNC" && i == 1 && raw.eq_ignore_ascii_case("NOTIFY") {
+        raw = "1";
+    }
     if shape.numbers.contains(&i) && !raw.is_empty() && raw.bytes().all(|b| b.is_ascii_digit()) {
         let digits = raw.trim_start_matches('0');
         return if digits.is_empty() { "0" } else { digits }.into();
@@ -177,6 +185,11 @@ mod tests {
                 "a RRSIG A 8 2 60 20300101000000 20200101000000 1 x. c2ln bmF0",
                 "a RRSIG TYPE1 8 2 60 20300101000000 20200101000000 1 x. c2lnbmF0",
             ),
+            (
+                "a DSYNC CDS NOTIFY 5359 scanner",
+                "a DSYNC TYPE59 notify 05359 Scanner.x.",
+            ),
+            ("a DSYNC CSYNC NOTIFY 5360 b", "a DSYNC CSYNC 1 5360 b"),
         ] {
             assert!(same(a, b), "{a} and {b}");
         }
@@ -194,6 +207,9 @@ mod tests {
             (r"a TYPE731 \# 2 abcd", r"a TYPE731 \# 3 abcd"),
             // Base64 is case-sensitive.
             ("a DNSKEY 256 3 8 AwEAAQ==", "a DNSKEY 256 3 8 aweaaq=="),
+            // NOTIFY is scheme 1, not any other.
+            ("a DSYNC CDS NOTIFY 5359 b", "a DSYNC CDS 2 5359 b"),
+            ("a DSYNC CDS NOTIFY 5359 b", "a DSYNC CSYNC NOTIFY 5359 b"),
         ] {
             assert!(!same(a, b), "{a} and {b}");
         }

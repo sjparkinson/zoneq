@@ -7,6 +7,7 @@ CI runs these on every pull request, so run them before you push:
 ```sh
 cargo fmt --check
 cargo clippy --all-targets --locked -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked
 cargo test --locked
 ```
 
@@ -45,6 +46,17 @@ heaptrack target/profiling/zoneq . target/bench-1m.zone > /dev/null
 xcrun xctrace record --template Allocations --launch -- target/profiling/zoneq . target/bench-1m.zone
 ```
 
+## IANA's type registry
+
+`tests/iana/dns-parameters-4.csv` is a copy of IANA's [registry of record types](https://www.iana.org/assignments/dns-parameters/dns-parameters.xhtml#dns-parameters-4), and `tests/iana.rs` fails when the `TYPE_NUMBERS` table in `src/zone.rs` disagrees with it. To catch up with new types, fetch the registry again and run the tests, which list everything the table has wrong:
+
+```sh
+curl -sSf https://www.iana.org/assignments/dns-parameters/dns-parameters-4.csv | tr -d '\r' > tests/iana/dns-parameters-4.csv
+cargo test --locked
+```
+
+IANA serves the file with CRLF line endings, and dropping them keeps the diff down to what changed. A new meta type, one that can't be in a zone, goes in the test's `META` list instead of the table. The copy lives outside `tests/samples` so the fuzzer doesn't seed from it.
+
 ## Fuzzing
 
 There are [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz) targets, which need nightly Rust:
@@ -73,4 +85,8 @@ Crashes land in `fuzz/artifacts/<target>/`. Pass one in place of the corpus dire
 
 ## Releases
 
-Every merge to `main` is published to crates.io as `0.2.<commit count>+<sha>`, which is also what `zoneq --version` prints. There's nothing to bump by hand.
+Every merge to `main` is released, and there's nothing to bump by hand.
+
+CI publishes the crate to crates.io first, as `0.2.<commit count>+<sha>`, which is also what `zoneq --version` prints. Once that has gone through, it creates a GitHub release tagged `v0.2.<commit count>`, with a binary for each of four targets: `aarch64-apple-darwin`, `aarch64-unknown-linux-musl`, `x86_64-unknown-linux-musl` and `x86_64-pc-windows-msvc`. Each binary has a build provenance attestation, which `gh attestation verify` can check.
+
+If the crate fails to publish, there's no GitHub release for that commit either.

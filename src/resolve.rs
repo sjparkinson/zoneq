@@ -21,7 +21,7 @@ pub enum Outcome {
     NoData,
     /// The name doesn't exist.
     NxDomain,
-    /// The CNAME chain came back on itself, or ran past [`MAX_CHAIN`].
+    /// The CNAME chain came back on itself, or ran past 16 CNAMEs.
     Loop,
 }
 

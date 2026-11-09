@@ -192,6 +192,39 @@ fn parse_error_exits_2_with_location() {
 }
 
 #[test]
+fn no_include_makes_include_a_parse_error() {
+    // From stdin, an include is relative to the working directory.
+    let zone = "$TTL 60\nwww.example.com. A 192.0.2.1\n$INCLUDE example.zone\n";
+    zoneq()
+        .args(["www.example.com.", "-"])
+        .write_stdin(zone)
+        .assert()
+        .success()
+        .stdout(concat!(
+            "www.example.com.\t60\tIN\tA\t192.0.2.1\n",
+            "www.example.com.\t86400\tIN\tCNAME\tservices.example.com.\n",
+        ));
+    for args in [
+        &["--no-include", "www.example.com.", "-"][..],
+        &["www.example.com.", "-", "--no-include"],
+    ] {
+        zoneq()
+            .args(args)
+            .write_stdin(zone)
+            .assert()
+            .code(2)
+            .stdout("")
+            .stderr("zoneq: <stdin>:3: $INCLUDE is switched off by --no-include\n");
+    }
+    // A zone with nothing to include reads the same either way.
+    zoneq()
+        .args(["--no-include", "www", "example.zone"])
+        .assert()
+        .success()
+        .stdout("www.example.com.\t86400\tIN\tCNAME\tservices.example.com.\n");
+}
+
+#[test]
 fn missing_file_exits_2() {
     zoneq()
         .args([".", "nope.zone"])
@@ -438,20 +471,47 @@ fn resolve_refers_delegations() {
             "lab.example.net.\t3600\tIN\tNS\tns.lab.example.net.\n",
             "lab.example.net.\t3600\tIN\tNS\tns.example.org.\n",
             "ns.lab.example.net.\t3600\tIN\tA\t192.0.2.53\n",
-        ));
+        ))
+        .stderr(REFERRAL);
 }
+
+// What --resolve says on stderr when it ends in something other than a
+// plain answer.
+const NXDOMAIN: &str = "zoneq: NXDOMAIN: the lookup ends at a name that doesn't exist\n";
+const NODATA: &str =
+    "zoneq: NODATA: the lookup ends at a name that exists, but has none of the records asked for\n";
+const REFERRAL: &str =
+    "zoneq: REFERRAL: the lookup ends at a delegation, so its name servers are the ones to ask\n";
+const LOOP: &str = "zoneq: LOOP: the CNAME chain loops, or runs past 16 CNAMEs\n";
+
+/// The places a CNAME can lead that resolve.zone doesn't have.
+const CNAMES: &str = concat!(
+    "$ORIGIN example.com.\n$TTL 60\n",
+    "@ SOA ns1 hostmaster 1 7200 3600 1209600 60\n",
+    "loop1 CNAME loop2\n",
+    "loop2 CNAME loop1\n",
+    "dangling CNAME missing\n",
+    "away CNAME www.example.org.\n",
+    "sub NS ns.sub\n",
+    "ns.sub A 192.0.2.53\n",
+    "into-sub CNAME host.sub\n",
+);
 
 #[test]
 fn resolve_nxdomain_and_nodata_exit_1() {
     // staff.users is an empty non-terminal, so it exists with no data and
     // hides the wildcard from the names below it.
-    for query in ["bob.staff.users", "staff.users", "nope"] {
+    for (query, note) in [
+        ("bob.staff.users", NXDOMAIN),
+        ("staff.users", NODATA),
+        ("nope", NXDOMAIN),
+    ] {
         zoneq()
             .args(["--resolve", query, "tests/samples/resolve.zone"])
             .assert()
             .code(1)
             .stdout("")
-            .stderr("");
+            .stderr(note);
     }
     zoneq()
         .args([
@@ -464,7 +524,161 @@ fn resolve_nxdomain_and_nodata_exit_1() {
         ])
         .assert()
         .code(1)
-        .stdout("[]\n");
+        .stdout("[]\n")
+        .stderr(NODATA);
+}
+
+#[test]
+fn resolve_answers_leave_stderr_empty() {
+    zoneq()
+        .args([
+            "--resolve",
+            "--type",
+            "a",
+            "www",
+            "tests/samples/resolve.zone",
+        ])
+        .assert()
+        .success()
+        .stdout("www.example.net.\t3600\tIN\tA\t192.0.2.10\n")
+        .stderr("");
+    // Following a CNAME to an answer is still an answer.
+    zoneq()
+        .args([
+            "--resolve",
+            "--type",
+            "a",
+            "bob.users",
+            "tests/samples/resolve.zone",
+        ])
+        .assert()
+        .success()
+        .stderr("");
+    // So is a CNAME out of the zone, since the rest is another server's job.
+    zoneq()
+        .args(["--resolve", "--type", "a", "away", "-"])
+        .write_stdin(CNAMES)
+        .assert()
+        .success()
+        .stdout("away.example.com.\t60\tIN\tCNAME\twww.example.org.\n")
+        .stderr("");
+}
+
+#[test]
+fn only_resolve_says_how_it_ended() {
+    zoneq()
+        .args(["nope", "tests/samples/resolve.zone"])
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr("");
+}
+
+#[test]
+fn resolve_flags_cname_loops() {
+    zoneq()
+        .args(["--resolve", "--type", "a", "loop1", "-"])
+        .write_stdin(CNAMES)
+        .assert()
+        .success()
+        .stdout(concat!(
+            "loop1.example.com.\t60\tIN\tCNAME\tloop2.example.com.\n",
+            "loop2.example.com.\t60\tIN\tCNAME\tloop1.example.com.\n",
+        ))
+        .stderr(LOOP);
+}
+
+#[test]
+fn resolve_flags_long_cname_chains() {
+    // c0 is 17 CNAMEs away from the A record, and c1 is 16.
+    let mut zone = String::from("$ORIGIN example.com.\n$TTL 60\n@ SOA ns1 host 1 2 3 4 5\n");
+    for i in 0..17 {
+        zone.push_str(&format!("c{i} CNAME c{}\n", i + 1));
+    }
+    zone.push_str("c17 A 192.0.2.1\n");
+
+    zoneq()
+        .args(["--resolve", "--type", "a", "c0", "-"])
+        .write_stdin(zone.as_str())
+        .assert()
+        .success()
+        .stdout_matches(|out| out.lines().count() == 16 && !out.contains("\tA\t"))
+        .stderr(LOOP);
+    // The 16 in the message is the most that gets followed.
+    zoneq()
+        .args(["--resolve", "--type", "a", "c1", "-"])
+        .write_stdin(zone.as_str())
+        .assert()
+        .success()
+        .stdout_matches(|out| out.lines().count() == 17 && out.ends_with("\tA\t192.0.2.1\n"))
+        .stderr("");
+}
+
+#[test]
+fn resolve_flags_cnames_to_missing_names() {
+    // The CNAME is still an answer of sorts, so it exits 0 like a server
+    // sending it with NXDOMAIN.
+    zoneq()
+        .args(["--resolve", "--type", "a", "dangling", "-"])
+        .write_stdin(CNAMES)
+        .assert()
+        .success()
+        .stdout("dangling.example.com.\t60\tIN\tCNAME\tmissing.example.com.\n")
+        .stderr(NXDOMAIN);
+}
+
+#[test]
+fn resolve_flags_cnames_without_the_type() {
+    zoneq()
+        .args([
+            "--resolve",
+            "--type",
+            "mx",
+            "bob.users",
+            "tests/samples/resolve.zone",
+        ])
+        .assert()
+        .success()
+        .stdout("bob.users.example.net.\t3600\tIN\tCNAME\twww.example.net.\n")
+        .stderr(NODATA);
+}
+
+#[test]
+fn resolve_flags_cnames_into_delegations() {
+    zoneq()
+        .args(["--resolve", "--type", "a", "into-sub", "-"])
+        .write_stdin(CNAMES)
+        .assert()
+        .success()
+        .stdout(concat!(
+            "into-sub.example.com.\t60\tIN\tCNAME\thost.sub.example.com.\n",
+            "sub.example.com.\t60\tIN\tNS\tns.sub.example.com.\n",
+            "ns.sub.example.com.\t60\tIN\tA\t192.0.2.53\n",
+        ))
+        .stderr(REFERRAL);
+}
+
+#[test]
+fn resolve_json_keeps_the_note_out_of_stdout() {
+    zoneq()
+        .args(["--resolve", "--json", "--type", "a", "dangling", "-"])
+        .write_stdin(CNAMES)
+        .assert()
+        .success()
+        .stdout(concat!(
+            "[\n",
+            "  {\n",
+            "    \"name\": \"dangling.example.com.\",\n",
+            "    \"ttl\": 60,\n",
+            "    \"class\": \"IN\",\n",
+            "    \"type\": \"CNAME\",\n",
+            "    \"rdata\": [\n",
+            "      \"missing.example.com.\"\n",
+            "    ]\n",
+            "  }\n",
+            "]\n",
+        ))
+        .stderr(NXDOMAIN);
 }
 
 #[test]
@@ -558,12 +772,20 @@ fn bad_arguments_exit_2() {
             "'--json' doesn't take a value",
         ),
         (
+            &["--no-include=yes", ".", "example.zone"],
+            "'--no-include' doesn't take a value",
+        ),
+        (
             &["--data", "--resolve", "www", "example.zone"],
             "'--data <NAME|IP>' needs a value",
         ),
         (
             &["--json", ".", "--json", "example.zone"],
             "'--json' can only be given once",
+        ),
+        (
+            &["--no-include", ".", "example.zone", "--no-include"],
+            "'--no-include' can only be given once",
         ),
         (
             &["--origin", "a.", "--origin", "b.", ".", "example.zone"],

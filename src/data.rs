@@ -33,14 +33,19 @@ impl DataQuery {
             return false;
         }
         match self {
+            // The parser never leaves rdata empty, but a `Record` can be
+            // built by hand, hence `first`.
             DataQuery::Addr(addr) => {
                 matches!(&*record.rtype, "A" | "AAAA")
-                    && record.rdata[0].parse::<IpAddr>().is_ok_and(|a| a == *addr)
+                    && record
+                        .rdata
+                        .first()
+                        .is_some_and(|f| f.parse::<IpAddr>().is_ok_and(|a| a == *addr))
             }
-            // The next name in an NSEC chain and an RRSIG's signer aren't
-            // things the record points at, and every signed record would
-            // match the apex if they counted.
-            DataQuery::Name(_) if matches!(&*record.rtype, "NSEC" | "RRSIG") => false,
+            // The next name in an NSEC chain and the signer of an RRSIG, or
+            // of the SIG it replaced, aren't things the record points at,
+            // and every signed record would match the apex if they counted.
+            DataQuery::Name(_) if matches!(&*record.rtype, "NSEC" | "RRSIG" | "SIG") => false,
             DataQuery::Name(query) => name_fields(&record.rtype).iter().any(|&i| {
                 record
                     .rdata
@@ -68,11 +73,14 @@ ns A 10.0.1.1
 mail A 10.0.1.5
 mail AAAA 2001:db8::5
 www CNAME Mail
+@ ALIAS lb
+shop ANAME lb
 _sip._tcp SRV 0 5 5060 mail
 note TXT "mail.example.com."
 ten TXT 10
 opaque A \# 4 0a000105
 @ RRSIG A 8 2 60 20300101000000 20200101000000 1 example.com. c2ln
+@ SIG A 8 2 60 20300101000000 20200101000000 1 example.com. c2ln
 @ NSEC mail A NS SOA MX RRSIG NSEC
 "#;
 
@@ -103,9 +111,24 @@ opaque A \# 4 0a000105
     }
 
     #[test]
+    fn alias_and_aname_targets() {
+        // Neither is a standard type, but they point at a host all the same.
+        let pointing_at_lb = ["example.com. ALIAS", "shop.example.com. ANAME"];
+        assert_eq!(owners("lb"), pointing_at_lb);
+        assert_eq!(owners("lb.example.com."), pointing_at_lb);
+    }
+
+    #[test]
+    fn signers_and_next_names_dont_count() {
+        // The apex signs the RRSIG and the SIG, and nothing points at it.
+        assert!(owners("@").is_empty());
+        assert!(!owners("mail").contains(&"example.com. NSEC".to_string()));
+    }
+
+    #[test]
     fn subtree() {
         assert_eq!(owners(".example.net"), ["example.com. MX"]);
-        assert_eq!(owners(".example.com").len(), 5);
+        assert_eq!(owners(".example.com").len(), 7);
     }
 
     #[test]
@@ -117,6 +140,24 @@ opaque A \# 4 0a000105
         );
         assert_eq!(owners("2001:0db8:0:0::5"), ["mail.example.com. AAAA"]);
         assert!(owners("10.0.1.9").is_empty());
+    }
+
+    #[test]
+    fn a_record_with_no_rdata_matches_nothing() {
+        // The parser never makes one, but anyone using the library can.
+        for rtype in ["A", "AAAA", "CNAME"] {
+            let record = Record {
+                name: Name::parse("example.com.", None).unwrap(),
+                ttl: 60,
+                class: "IN".into(),
+                rtype: rtype.into(),
+                rdata: Vec::new(),
+            };
+            for data in ["10.0.1.5", "2001:db8::5", "mail.example.com."] {
+                let query = DataQuery::parse(data, None).unwrap();
+                assert!(!query.matches(&record), "{rtype} and {data}");
+            }
+        }
     }
 
     #[test]

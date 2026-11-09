@@ -8,6 +8,23 @@ Query zone files.
 cargo install zoneq
 ```
 
+Or skip the compiler. Every merge to `main` also publishes a [GitHub release](https://github.com/sjparkinson/zoneq/releases) with a binary for each of four targets:
+
+- `zoneq-aarch64-apple-darwin`
+- `zoneq-aarch64-unknown-linux-musl`
+- `zoneq-x86_64-unknown-linux-musl`
+- `zoneq-x86_64-pc-windows-msvc.exe`
+
+Each one has a build provenance attestation, so you can check it was built by this repository's CI before you run it. With the [GitHub CLI](https://cli.github.com), download the one you want from the latest release, verify it, and make it executable:
+
+```sh
+gh release download --repo sjparkinson/zoneq --pattern 'zoneq-aarch64-apple-darwin'
+gh attestation verify zoneq-aarch64-apple-darwin --repo sjparkinson/zoneq
+chmod +x zoneq-aarch64-apple-darwin
+```
+
+Then move it somewhere on your `PATH` as `zoneq`.
+
 ## Usage
 
 ```
@@ -25,6 +42,7 @@ Options:
       --json            Print matches as a JSON array
       --data <NAME|IP>  Only match records pointing at this name or IP address
       --resolve         Answer like the zone's server would, following CNAMEs and wildcards
+      --no-include      Treat $INCLUDE as an error, for zones you didn't write
   -h, --help            Print help
   -V, --version         Print version
 ```
@@ -92,7 +110,7 @@ k.root-servers.net.	518400	IN	A	193.0.14.129
 - Otherwise a wildcard directly below the closest existing name answers instead, with the owner rewritten to the query. Empty non-terminals count as existing here too, which is how they hide a wildcard above them.
 - A name at or below a delegation gets a referral: the NS records at the cut, then any A and AAAA glue in the zone for them. Asking for only DS at the cut gets the parent's DS records.
 
-When the name doesn't exist, or has nothing of that type, it prints nothing and exits 1. A CNAME chain that ends somewhere empty still prints the CNAMEs and exits 0, the same as a server putting them in the answer section. DNAME isn't followed.
+When the name doesn't exist, or has nothing of that type, it prints nothing and exits 1. A CNAME chain that ends somewhere empty still prints the CNAMEs and exits 0, the same as a server putting them in the answer section. To tell these apart, anything other than a plain answer also gets one line on stderr saying how it ended, starting `zoneq: NXDOMAIN:`, `zoneq: NODATA:`, `zoneq: REFERRAL:` or `zoneq: LOOP:`. Stdout and the exit code don't change. DNAME isn't followed.
 
 ```sh
 $ zoneq --resolve --type a www example.zone
@@ -108,12 +126,18 @@ $ zoneq --resolve host.lab tests/samples/resolve.zone
 lab.example.net.	3600	IN	NS	ns.lab.example.net.
 lab.example.net.	3600	IN	NS	ns.example.org.
 ns.lab.example.net.	3600	IN	A	192.0.2.53
+zoneq: REFERRAL: the lookup ends at a delegation, so its name servers are the ones to ask
+
+$ zoneq --resolve nope tests/samples/resolve.zone
+zoneq: NXDOMAIN: the lookup ends at a name that doesn't exist
 ```
 
 ## What it understands
 
 Everything in the [RFC 1035 § 5 master file format](https://tools.ietf.org/html/rfc1035#section-5) (`$ORIGIN`, `$INCLUDE`, parentheses, comments, quoting, escapes, inherited owners and classes), plus `$TTL` from [RFC 2308 § 4](https://tools.ietf.org/html/rfc2308#section-4) and BIND's TTL units like `1h30m`. `$GENERATE` isn't supported.
 
-Types and classes can be written the [RFC 3597](https://tools.ietf.org/html/rfc3597) way, so `TYPE1` is an A record and `TYPE256` is URI, in the zone and in `--type`, for any data type in [IANA's registry](https://www.iana.org/assignments/dns-parameters/dns-parameters.xhtml#dns-parameters-4), and `CLASS1` is IN. Generic `\#` rdata for MX, NS, CNAME, PTR and DNAME, and for A and AAAA in class IN, is rewritten in the usual form, so `A \# 4 c0000201` is found by `--data 192.0.2.1`. Other types keep their hex. A TTL from 2147483648 up to 4294967295 counts as 0, the way BIND reads it and [RFC 2181 § 8](https://tools.ietf.org/html/rfc2181#section-8) suggests, and anything bigger is an error.
+Types and classes can be written the [RFC 3597](https://tools.ietf.org/html/rfc3597) way, so `TYPE1` is an A record and `TYPE256` is URI, in the zone and in `--type`, for any data type in [IANA's registry](https://www.iana.org/assignments/dns-parameters/dns-parameters.xhtml#dns-parameters-4), and `CLASS1` is IN. Generic `\#` rdata for MX, NS, CNAME, PTR and DNAME, and for A and AAAA in class IN, is rewritten in the usual form, so `A \# 4 c0000201` is found by `--data 192.0.2.1`. Other types keep their hex. ALIAS and ANAME aren't in the registry, but DNS providers export them, so their targets are read as names, the way a CNAME's is. A TTL from 2147483648 up to 4294967295 counts as 0, the way BIND reads it and [RFC 2181 § 8](https://tools.ietf.org/html/rfc2181#section-8) suggests, and anything bigger is an error.
 
-Names longer than the 255 octets [RFC 1035 § 2.3.4](https://tools.ietf.org/html/rfc1035#section-2.3.4) allows, or with a label over 63, are errors. `$INCLUDE` only reads regular files, so a zone can't point it at `/dev/zero` or a pipe. Control characters in names and rdata print as `\DDD` escapes, which mean the same octets, so a zone file can't send escape sequences to your terminal.
+Names longer than the 255 octets [RFC 1035 § 2.3.4](https://tools.ietf.org/html/rfc1035#section-2.3.4) allows, or with a label over 63, are errors. Control characters in names and rdata print as `\DDD` escapes, which mean the same octets, so a zone file can't send escape sequences to your terminal.
+
+`$INCLUDE` only reads regular files, so a zone can't point it at `/dev/zero` or a pipe. It can still name any regular file you can read, by absolute path or with `../`. Lines in it that parse come out as records, and the first that doesn't has a token quoted in the error message. BIND does the same, and it doesn't matter for your own zones. For zones you didn't write, pass `--no-include` and any `$INCLUDE` is a parse error instead.

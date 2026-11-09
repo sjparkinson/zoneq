@@ -52,6 +52,8 @@ const TYPES: &[&str] = &[
 
 /// The data types in IANA's registry by number, which is what RFC 3597's
 /// `TYPE<n>` spells. Meta types like OPT and ANY can't be in a zone.
+/// Temporary registrations count, since a zone can hold them while they
+/// last, and `tests/iana.rs` holds the table to a copy of the registry.
 const TYPE_NUMBERS: &[(u16, &str)] = &[
     (1, "A"),
     (2, "NS"),
@@ -105,6 +107,7 @@ const TYPE_NUMBERS: &[(u16, &str)] = &[
     (51, "NSEC3PARAM"),
     (52, "TLSA"),
     (53, "SMIMEA"),
+    (54, "DELEGPARAM"),
     (55, "HIP"),
     (56, "NINFO"),
     (57, "RKEY"),
@@ -116,6 +119,11 @@ const TYPE_NUMBERS: &[(u16, &str)] = &[
     (63, "ZONEMD"),
     (64, "SVCB"),
     (65, "HTTPS"),
+    (66, "DSYNC"),
+    (67, "HHIT"),
+    (68, "BRID"),
+    (69, "UNECE"),
+    (70, "ISO"),
     (99, "SPF"),
     (100, "UINFO"),
     (101, "UID"),
@@ -138,6 +146,7 @@ const TYPE_NUMBERS: &[(u16, &str)] = &[
     (264, "IPN"),
     (32768, "TA"),
     (32769, "DLV"),
+    (61440, "DELEG"),
 ];
 
 #[derive(Clone, Debug)]
@@ -210,47 +219,78 @@ pub struct Zone {
 }
 
 pub fn parse_file(path: &Path, origin: Option<Name>) -> Result<Zone, Error> {
-    let input = read(path)?;
-    parse_str(&input, path, origin)
+    ParseOptions::default().parse_file(path, origin)
 }
 
 /// Reads zone text from `reader`, such as stdin, then parses it like
 /// [`parse_str`].
-pub fn parse_reader(
-    mut reader: impl Read,
-    source: &Path,
-    origin: Option<Name>,
-) -> Result<Zone, Error> {
-    let mut bytes = Vec::new();
-    reader
-        .read_to_end(&mut bytes)
-        .map_err(|e| Error::io(source, e))?;
-    parse_str(&decode(bytes), source, origin)
+pub fn parse_reader(reader: impl Read, source: &Path, origin: Option<Name>) -> Result<Zone, Error> {
+    ParseOptions::default().parse_reader(reader, source, origin)
 }
 
 /// Parses zone text. `source` is used in error messages and as the base for
 /// `$INCLUDE` paths.
 pub fn parse_str(input: &str, source: &Path, origin: Option<Name>) -> Result<Zone, Error> {
-    let mut parser = Parser {
-        records: Vec::new(),
-        origin: None,
-        includes: 0,
-        included_bytes: 0,
-    };
-    let mut state = State {
-        origin: origin.clone(),
-        ..State::default()
-    };
-    parser.parse(input, source, &mut state)?;
-    let apex = parser
-        .records
-        .iter()
-        .find(|r| r.rtype == "SOA")
-        .map(|r| r.name.clone());
-    Ok(Zone {
-        origin: apex.or(parser.origin).or(origin),
-        records: parser.records,
-    })
+    ParseOptions::default().parse_str(input, source, origin)
+}
+
+/// Switches for a parse. [`parse_file`], [`parse_reader`] and [`parse_str`]
+/// use the defaults, and the methods here take the same arguments.
+#[derive(Clone, Debug, Default)]
+pub struct ParseOptions {
+    /// Makes every `$INCLUDE` a parse error, for zones you didn't write.
+    /// An include can name any regular file you can read, and its lines
+    /// come back as records or quoted in an error message.
+    pub no_include: bool,
+}
+
+impl ParseOptions {
+    pub fn parse_file(&self, path: &Path, origin: Option<Name>) -> Result<Zone, Error> {
+        let input = read(path)?;
+        self.parse_str(&input, path, origin)
+    }
+
+    pub fn parse_reader(
+        &self,
+        mut reader: impl Read,
+        source: &Path,
+        origin: Option<Name>,
+    ) -> Result<Zone, Error> {
+        let mut bytes = Vec::new();
+        reader
+            .read_to_end(&mut bytes)
+            .map_err(|e| Error::io(source, e))?;
+        self.parse_str(&decode(bytes), source, origin)
+    }
+
+    pub fn parse_str(
+        &self,
+        input: &str,
+        source: &Path,
+        origin: Option<Name>,
+    ) -> Result<Zone, Error> {
+        let mut parser = Parser {
+            records: Vec::new(),
+            origin: None,
+            no_include: self.no_include,
+            includes: 0,
+            included_bytes: 0,
+        };
+        let mut state = State {
+            origin: origin.clone(),
+            ..State::default()
+        };
+        parser.parse(input, source, &mut state)?;
+        let apex = parser
+            .records
+            .iter()
+            .find(|r| r.rtype == "SOA")
+            .map(|r| r.name.clone());
+        Ok(Zone {
+            origin: apex.or(parser.origin).or(origin),
+            records: parser.records,
+        })
+    }
 }
 
 fn read(path: &Path) -> Result<String, Error> {
@@ -296,6 +336,7 @@ struct State {
 struct Parser {
     records: Vec<Record>,
     origin: Option<Name>,
+    no_include: bool,
     includes: usize,
     included_bytes: u64,
 }
@@ -342,6 +383,11 @@ impl Parser {
                 state.default_ttl = Some(ttl);
             }
             "$INCLUDE" => {
+                // Before the arguments are looked at, so the path is never
+                // joined, checked or opened.
+                if self.no_include {
+                    return Err(fail("$INCLUDE is switched off by --no-include".into()));
+                }
                 let (file, origin) = match args {
                     [file] => (file, None),
                     [file, origin] => (file, Some(origin)),
@@ -669,10 +715,12 @@ fn is_type_like(raw: &str) -> bool {
 pub(crate) fn name_fields(rtype: &str) -> &'static [usize] {
     match rtype {
         "NS" | "CNAME" | "PTR" | "DNAME" | "MB" | "MG" | "MR" | "NSEC" => &[0],
+        // Neither is in IANA's registry, but DNS providers export both.
+        "ALIAS" | "ANAME" => &[0],
         "MX" | "AFSDB" | "RT" | "KX" | "LP" | "SVCB" | "HTTPS" => &[1],
         "SOA" | "RP" | "MINFO" => &[0, 1],
         "PX" => &[1, 2],
-        "SRV" => &[3],
+        "SRV" | "DSYNC" => &[3],
         "NAPTR" => &[5],
         "RRSIG" | "SIG" => &[7],
         _ => &[],
@@ -836,6 +884,7 @@ mod tests {
             "@ RP admin info\n",
             "@ NSEC next A NSEC RRSIG\n",
             "@ RRSIG A 13 2 60 20260101000000 20250101000000 1234 @ c2ln\n",
+            "*._dsync DSYNC CDS NOTIFY 5359 scanner\n",
         ))
         .unwrap();
         assert_eq!(
@@ -849,6 +898,29 @@ mod tests {
                 "admin.example.com. info.example.com.",
                 "next.example.com. A NSEC RRSIG",
                 "A 13 2 60 20260101000000 20250101000000 1234 example.com. c2ln",
+                "CDS NOTIFY 5359 scanner.example.com.",
+            ]
+        );
+    }
+
+    #[test]
+    fn qualifies_alias_and_aname_targets() {
+        let zone = parse(concat!(
+            "$ORIGIN example.com.\n$TTL 60\n",
+            "@ ALIAS lb\n",
+            "@ alias lb.example.net.\n",
+            "shop ANAME @\n",
+            // In the generic form there's no name to find.
+            "old ANAME \\# 4 026c6200\n",
+        ))
+        .unwrap();
+        assert_eq!(
+            lines(&zone),
+            [
+                "example.com.\t60\tIN\tALIAS\tlb.example.com.",
+                "example.com.\t60\tIN\tALIAS\tlb.example.net.",
+                "shop.example.com.\t60\tIN\tANAME\texample.com.",
+                "old.example.com.\t60\tIN\tANAME\t\\# 4 026c6200",
             ]
         );
     }
@@ -952,10 +1024,12 @@ mod tests {
 
     #[test]
     fn every_type_has_a_number() {
-        // Every type `name_fields` knows.
+        // Every type `name_fields` knows that IANA does too, which leaves
+        // out ALIAS and ANAME.
         let names = [
             "NS", "CNAME", "PTR", "DNAME", "MB", "MG", "MR", "NSEC", "MX", "AFSDB", "RT", "KX",
-            "LP", "SVCB", "HTTPS", "SOA", "RP", "MINFO", "PX", "SRV", "NAPTR", "RRSIG", "SIG",
+            "LP", "SVCB", "HTTPS", "SOA", "RP", "MINFO", "PX", "SRV", "DSYNC", "NAPTR", "RRSIG",
+            "SIG",
         ];
         for name in TYPES.iter().chain(&names) {
             assert!(
