@@ -718,7 +718,7 @@ pub(crate) fn name_fields(rtype: &str) -> &'static [usize] {
         "MX" | "AFSDB" | "RT" | "KX" | "LP" | "SVCB" | "HTTPS" => &[1],
         "SOA" | "RP" | "MINFO" => &[0, 1],
         "PX" => &[1, 2],
-        "SRV" => &[3],
+        "SRV" | "DSYNC" => &[3],
         "NAPTR" => &[5],
         "RRSIG" | "SIG" => &[7],
         _ => &[],
@@ -882,6 +882,7 @@ mod tests {
             "@ RP admin info\n",
             "@ NSEC next A NSEC RRSIG\n",
             "@ RRSIG A 13 2 60 20260101000000 20250101000000 1234 @ c2ln\n",
+            "*._dsync DSYNC CDS NOTIFY 5359 scanner\n",
         ))
         .unwrap();
         assert_eq!(
@@ -895,6 +896,7 @@ mod tests {
                 "admin.example.com. info.example.com.",
                 "next.example.com. A NSEC RRSIG",
                 "A 13 2 60 20260101000000 20250101000000 1234 example.com. c2ln",
+                "CDS NOTIFY 5359 scanner.example.com.",
             ]
         );
     }
@@ -1001,7 +1003,8 @@ mod tests {
         // Every type `name_fields` knows.
         let names = [
             "NS", "CNAME", "PTR", "DNAME", "MB", "MG", "MR", "NSEC", "MX", "AFSDB", "RT", "KX",
-            "LP", "SVCB", "HTTPS", "SOA", "RP", "MINFO", "PX", "SRV", "NAPTR", "RRSIG", "SIG",
+            "LP", "SVCB", "HTTPS", "SOA", "RP", "MINFO", "PX", "SRV", "DSYNC", "NAPTR", "RRSIG",
+            "SIG",
         ];
         for name in TYPES.iter().chain(&names) {
             assert!(
