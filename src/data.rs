@@ -37,10 +37,10 @@ impl DataQuery {
                 matches!(&*record.rtype, "A" | "AAAA")
                     && record.rdata[0].parse::<IpAddr>().is_ok_and(|a| a == *addr)
             }
-            // The next name in an NSEC chain and an RRSIG's signer aren't
-            // things the record points at, and every signed record would
-            // match the apex if they counted.
-            DataQuery::Name(_) if matches!(&*record.rtype, "NSEC" | "RRSIG") => false,
+            // The next name in an NSEC chain and the signer of an RRSIG, or
+            // of the SIG it replaced, aren't things the record points at,
+            // and every signed record would match the apex if they counted.
+            DataQuery::Name(_) if matches!(&*record.rtype, "NSEC" | "RRSIG" | "SIG") => false,
             DataQuery::Name(query) => name_fields(&record.rtype).iter().any(|&i| {
                 record
                     .rdata
@@ -75,6 +75,7 @@ note TXT "mail.example.com."
 ten TXT 10
 opaque A \# 4 0a000105
 @ RRSIG A 8 2 60 20300101000000 20200101000000 1 example.com. c2ln
+@ SIG A 8 2 60 20300101000000 20200101000000 1 example.com. c2ln
 @ NSEC mail A NS SOA MX RRSIG NSEC
 "#;
 
@@ -110,6 +111,13 @@ opaque A \# 4 0a000105
         let pointing_at_lb = ["example.com. ALIAS", "shop.example.com. ANAME"];
         assert_eq!(owners("lb"), pointing_at_lb);
         assert_eq!(owners("lb.example.com."), pointing_at_lb);
+    }
+
+    #[test]
+    fn signers_and_next_names_dont_count() {
+        // The apex signs the RRSIG and the SIG, and nothing points at it.
+        assert!(owners("@").is_empty());
+        assert!(!owners("mail").contains(&"example.com. NSEC".to_string()));
     }
 
     #[test]
