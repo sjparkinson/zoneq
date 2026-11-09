@@ -33,9 +33,14 @@ impl DataQuery {
             return false;
         }
         match self {
+            // The parser never leaves rdata empty, but a `Record` can be
+            // built by hand, hence `first`.
             DataQuery::Addr(addr) => {
                 matches!(&*record.rtype, "A" | "AAAA")
-                    && record.rdata[0].parse::<IpAddr>().is_ok_and(|a| a == *addr)
+                    && record
+                        .rdata
+                        .first()
+                        .is_some_and(|f| f.parse::<IpAddr>().is_ok_and(|a| a == *addr))
             }
             // The next name in an NSEC chain and the signer of an RRSIG, or
             // of the SIG it replaced, aren't things the record points at,
@@ -135,6 +140,24 @@ opaque A \# 4 0a000105
         );
         assert_eq!(owners("2001:0db8:0:0::5"), ["mail.example.com. AAAA"]);
         assert!(owners("10.0.1.9").is_empty());
+    }
+
+    #[test]
+    fn a_record_with_no_rdata_matches_nothing() {
+        // The parser never makes one, but anyone using the library can.
+        for rtype in ["A", "AAAA", "CNAME"] {
+            let record = Record {
+                name: Name::parse("example.com.", None).unwrap(),
+                ttl: 60,
+                class: "IN".into(),
+                rtype: rtype.into(),
+                rdata: Vec::new(),
+            };
+            for data in ["10.0.1.5", "2001:db8::5", "mail.example.com."] {
+                let query = DataQuery::parse(data, None).unwrap();
+                assert!(!query.matches(&record), "{rtype} and {data}");
+            }
+        }
     }
 
     #[test]
