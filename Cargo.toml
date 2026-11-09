@@ -7,6 +7,9 @@ description = "Query zone files."
 repository = "https://github.com/sjparkinson/zoneq"
 readme = "README.md"
 license = "MIT"
+keywords = ["dns", "zone", "zonefile", "bind", "cli"]
+categories = ["command-line-utilities", "network-programming"]
+exclude = [".github/"]
 
 [[bench]]
 name = "parse"
