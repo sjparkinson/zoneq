@@ -185,7 +185,7 @@ jobs:
 
   github:
     name: gh release
-    needs: test
+    needs: [test, cargo]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-26.04
     permissions:

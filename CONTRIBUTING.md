@@ -74,4 +74,8 @@ Crashes land in `fuzz/artifacts/<target>/`. Pass one in place of the corpus dire
 
 ## Releases
 
-Every merge to `main` is published to crates.io as `0.2.<commit count>+<sha>`, which is also what `zoneq --version` prints. There's nothing to bump by hand.
+Every merge to `main` is released, and there's nothing to bump by hand.
+
+CI publishes the crate to crates.io first, as `0.2.<commit count>+<sha>`, which is also what `zoneq --version` prints. Once that has gone through, it creates a GitHub release tagged `v0.2.<commit count>`, with a binary for each of four targets: `aarch64-apple-darwin`, `aarch64-unknown-linux-musl`, `x86_64-unknown-linux-musl` and `x86_64-pc-windows-msvc`. Each binary has a build provenance attestation, which `gh attestation verify` can check.
+
+If the crate fails to publish, there's no GitHub release for that commit either.
