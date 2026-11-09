@@ -32,6 +32,8 @@ pub struct Options {
     /// Answer like the zone's authoritative server would, instead of
     /// matching owners.
     pub resolve: bool,
+    /// Treat `$INCLUDE` as a parse error, for zones you didn't write.
+    pub no_include: bool,
 }
 
 impl Options {
@@ -55,10 +57,13 @@ pub struct Summary {
 /// there were, with how the answer ended if `opts.resolve` asked for one.
 pub fn run(opts: &Options, out: &mut impl Write) -> Result<Summary, Error> {
     let origin = opts.origin.clone();
+    let parse = zone::ParseOptions {
+        no_include: opts.no_include,
+    };
     let zone = if opts.file == Path::new("-") {
-        zone::parse_reader(io::stdin().lock(), Path::new("<stdin>"), origin)?
+        parse.parse_reader(io::stdin().lock(), Path::new("<stdin>"), origin)?
     } else {
-        zone::parse_file(&opts.file, origin)?
+        parse.parse_file(&opts.file, origin)?
     };
 
     let resolved;
@@ -113,6 +118,7 @@ mod tests {
             json: false,
             data: None,
             resolve: false,
+            no_include: false,
         }
     }
 

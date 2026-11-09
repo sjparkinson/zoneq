@@ -42,6 +42,7 @@ Options:
       --json            Print matches as a JSON array
       --data <NAME|IP>  Only match records pointing at this name or IP address
       --resolve         Answer like the zone's server would, following CNAMEs and wildcards
+      --no-include      Treat $INCLUDE as an error, for zones you didn't write
   -h, --help            Print help
   -V, --version         Print version
 ```
@@ -137,4 +138,6 @@ Everything in the [RFC 1035 § 5 master file format](https://tools.ietf.org/html
 
 Types and classes can be written the [RFC 3597](https://tools.ietf.org/html/rfc3597) way, so `TYPE1` is an A record and `TYPE256` is URI, in the zone and in `--type`, for any data type in [IANA's registry](https://www.iana.org/assignments/dns-parameters/dns-parameters.xhtml#dns-parameters-4), and `CLASS1` is IN. Generic `\#` rdata for MX, NS, CNAME, PTR and DNAME, and for A and AAAA in class IN, is rewritten in the usual form, so `A \# 4 c0000201` is found by `--data 192.0.2.1`. Other types keep their hex. A TTL from 2147483648 up to 4294967295 counts as 0, the way BIND reads it and [RFC 2181 § 8](https://tools.ietf.org/html/rfc2181#section-8) suggests, and anything bigger is an error.
 
-Names longer than the 255 octets [RFC 1035 § 2.3.4](https://tools.ietf.org/html/rfc1035#section-2.3.4) allows, or with a label over 63, are errors. `$INCLUDE` only reads regular files, so a zone can't point it at `/dev/zero` or a pipe. Control characters in names and rdata print as `\DDD` escapes, which mean the same octets, so a zone file can't send escape sequences to your terminal.
+Names longer than the 255 octets [RFC 1035 § 2.3.4](https://tools.ietf.org/html/rfc1035#section-2.3.4) allows, or with a label over 63, are errors. Control characters in names and rdata print as `\DDD` escapes, which mean the same octets, so a zone file can't send escape sequences to your terminal.
+
+`$INCLUDE` only reads regular files, so a zone can't point it at `/dev/zero` or a pipe. It can still name any regular file you can read, by absolute path or with `../`. Lines in it that parse come out as records, and the first that doesn't has a token quoted in the error message. BIND does the same, and it doesn't matter for your own zones. For zones you didn't write, pass `--no-include` and any `$INCLUDE` is a parse error instead.

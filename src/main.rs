@@ -27,6 +27,7 @@ Options:
       --json            Print matches as a JSON array
       --data <NAME|IP>  Only match records pointing at this name or IP address
       --resolve         Answer like the zone's server would, following CNAMEs and wildcards
+      --no-include      Treat $INCLUDE as an error, for zones you didn't write
   -h, --help            Print help
   -V, --version         Print version
 
@@ -61,6 +62,7 @@ fn parse_args(args: impl Iterator<Item = OsString>) -> Result<Command, String> {
     let mut json = false;
     let mut data = None;
     let mut resolve = false;
+    let mut no_include = false;
     let mut any_type = false;
     let mut positionals = Vec::new();
 
@@ -90,7 +92,9 @@ fn parse_args(args: impl Iterator<Item = OsString>) -> Result<Command, String> {
         };
 
         match flag {
-            "-h" | "--help" | "-V" | "--version" | "--json" | "--resolve" if inline.is_some() => {
+            "-h" | "--help" | "-V" | "--version" | "--json" | "--resolve" | "--no-include"
+                if inline.is_some() =>
+            {
                 return Err(format!("'{flag}' doesn't take a value"));
             }
             "-h" | "--help" => return Ok(Command::Help),
@@ -102,6 +106,10 @@ fn parse_args(args: impl Iterator<Item = OsString>) -> Result<Command, String> {
             "--resolve" => {
                 once(resolve, flag)?;
                 resolve = true;
+            }
+            "--no-include" => {
+                once(no_include, flag)?;
+                no_include = true;
             }
             "--type" => {
                 let shown = "--type <TYPE>";
@@ -165,6 +173,7 @@ fn parse_args(args: impl Iterator<Item = OsString>) -> Result<Command, String> {
         json,
         data,
         resolve,
+        no_include,
     }))
 }
 

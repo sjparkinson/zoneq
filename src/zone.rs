@@ -210,47 +210,78 @@ pub struct Zone {
 }
 
 pub fn parse_file(path: &Path, origin: Option<Name>) -> Result<Zone, Error> {
-    let input = read(path)?;
-    parse_str(&input, path, origin)
+    ParseOptions::default().parse_file(path, origin)
 }
 
 /// Reads zone text from `reader`, such as stdin, then parses it like
 /// [`parse_str`].
-pub fn parse_reader(
-    mut reader: impl Read,
-    source: &Path,
-    origin: Option<Name>,
-) -> Result<Zone, Error> {
-    let mut bytes = Vec::new();
-    reader
-        .read_to_end(&mut bytes)
-        .map_err(|e| Error::io(source, e))?;
-    parse_str(&decode(bytes), source, origin)
+pub fn parse_reader(reader: impl Read, source: &Path, origin: Option<Name>) -> Result<Zone, Error> {
+    ParseOptions::default().parse_reader(reader, source, origin)
 }
 
 /// Parses zone text. `source` is used in error messages and as the base for
 /// `$INCLUDE` paths.
 pub fn parse_str(input: &str, source: &Path, origin: Option<Name>) -> Result<Zone, Error> {
-    let mut parser = Parser {
-        records: Vec::new(),
-        origin: None,
-        includes: 0,
-        included_bytes: 0,
-    };
-    let mut state = State {
-        origin: origin.clone(),
-        ..State::default()
-    };
-    parser.parse(input, source, &mut state)?;
-    let apex = parser
-        .records
-        .iter()
-        .find(|r| r.rtype == "SOA")
-        .map(|r| r.name.clone());
-    Ok(Zone {
-        origin: apex.or(parser.origin).or(origin),
-        records: parser.records,
-    })
+    ParseOptions::default().parse_str(input, source, origin)
+}
+
+/// Switches for a parse. [`parse_file`], [`parse_reader`] and [`parse_str`]
+/// use the defaults, and the methods here take the same arguments.
+#[derive(Clone, Debug, Default)]
+pub struct ParseOptions {
+    /// Makes every `$INCLUDE` a parse error, for zones you didn't write.
+    /// An include can name any regular file you can read, and its lines
+    /// come back as records or quoted in an error message.
+    pub no_include: bool,
+}
+
+impl ParseOptions {
+    pub fn parse_file(&self, path: &Path, origin: Option<Name>) -> Result<Zone, Error> {
+        let input = read(path)?;
+        self.parse_str(&input, path, origin)
+    }
+
+    pub fn parse_reader(
+        &self,
+        mut reader: impl Read,
+        source: &Path,
+        origin: Option<Name>,
+    ) -> Result<Zone, Error> {
+        let mut bytes = Vec::new();
+        reader
+            .read_to_end(&mut bytes)
+            .map_err(|e| Error::io(source, e))?;
+        self.parse_str(&decode(bytes), source, origin)
+    }
+
+    pub fn parse_str(
+        &self,
+        input: &str,
+        source: &Path,
+        origin: Option<Name>,
+    ) -> Result<Zone, Error> {
+        let mut parser = Parser {
+            records: Vec::new(),
+            origin: None,
+            no_include: self.no_include,
+            includes: 0,
+            included_bytes: 0,
+        };
+        let mut state = State {
+            origin: origin.clone(),
+            ..State::default()
+        };
+        parser.parse(input, source, &mut state)?;
+        let apex = parser
+            .records
+            .iter()
+            .find(|r| r.rtype == "SOA")
+            .map(|r| r.name.clone());
+        Ok(Zone {
+            origin: apex.or(parser.origin).or(origin),
+            records: parser.records,
+        })
+    }
 }
 
 fn read(path: &Path) -> Result<String, Error> {
@@ -296,6 +327,7 @@ struct State {
 struct Parser {
     records: Vec<Record>,
     origin: Option<Name>,
+    no_include: bool,
     includes: usize,
     included_bytes: u64,
 }
@@ -342,6 +374,11 @@ impl Parser {
                 state.default_ttl = Some(ttl);
             }
             "$INCLUDE" => {
+                // Before the arguments are looked at, so the path is never
+                // joined, checked or opened.
+                if self.no_include {
+                    return Err(fail("$INCLUDE is switched off by --no-include".into()));
+                }
                 let (file, origin) = match args {
                     [file] => (file, None),
                     [file, origin] => (file, Some(origin)),

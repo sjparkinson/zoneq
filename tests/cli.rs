@@ -192,6 +192,39 @@ fn parse_error_exits_2_with_location() {
 }
 
 #[test]
+fn no_include_makes_include_a_parse_error() {
+    // From stdin, an include is relative to the working directory.
+    let zone = "$TTL 60\nwww.example.com. A 192.0.2.1\n$INCLUDE example.zone\n";
+    zoneq()
+        .args(["www.example.com.", "-"])
+        .write_stdin(zone)
+        .assert()
+        .success()
+        .stdout(concat!(
+            "www.example.com.\t60\tIN\tA\t192.0.2.1\n",
+            "www.example.com.\t86400\tIN\tCNAME\tservices.example.com.\n",
+        ));
+    for args in [
+        &["--no-include", "www.example.com.", "-"][..],
+        &["www.example.com.", "-", "--no-include"],
+    ] {
+        zoneq()
+            .args(args)
+            .write_stdin(zone)
+            .assert()
+            .code(2)
+            .stdout("")
+            .stderr("zoneq: <stdin>:3: $INCLUDE is switched off by --no-include\n");
+    }
+    // A zone with nothing to include reads the same either way.
+    zoneq()
+        .args(["--no-include", "www", "example.zone"])
+        .assert()
+        .success()
+        .stdout("www.example.com.\t86400\tIN\tCNAME\tservices.example.com.\n");
+}
+
+#[test]
 fn missing_file_exits_2() {
     zoneq()
         .args([".", "nope.zone"])
@@ -739,12 +772,20 @@ fn bad_arguments_exit_2() {
             "'--json' doesn't take a value",
         ),
         (
+            &["--no-include=yes", ".", "example.zone"],
+            "'--no-include' doesn't take a value",
+        ),
+        (
             &["--data", "--resolve", "www", "example.zone"],
             "'--data <NAME|IP>' needs a value",
         ),
         (
             &["--json", ".", "--json", "example.zone"],
             "'--json' can only be given once",
+        ),
+        (
+            &["--no-include", ".", "example.zone", "--no-include"],
+            "'--no-include' can only be given once",
         ),
         (
             &["--origin", "a.", "--origin", "b.", ".", "example.zone"],
